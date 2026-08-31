@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using HotspotService.Infrastructure;
 using HotspotService.Models;
 
@@ -5,10 +7,17 @@ namespace HotspotService.Services;
 
 public sealed class HotspotPluginSettingsStore : ObservableObject
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private readonly string _settingsFilePath;
     private readonly object _fileLock = new();
     private bool _autoStartGuard = true;
     private GuardTargetState _startupTarget = GuardTargetState.On;
+    private HotspotRestartPolicySettings _restartPolicy = new();
 
     public HotspotPluginSettingsStore(string settingsFilePath)
     {
@@ -41,6 +50,18 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
         }
     }
 
+    public HotspotRestartPolicySettings RestartPolicy
+    {
+        get => _restartPolicy;
+        set
+        {
+            if (SetProperty(ref _restartPolicy, value))
+            {
+                Save();
+            }
+        }
+    }
+
     private void Load()
     {
         if (!File.Exists(_settingsFilePath))
@@ -49,6 +70,35 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
             return;
         }
 
+        var migrated = false;
+        try
+        {
+            var document = JsonSerializer.Deserialize<HotspotPluginSettingsDocument>(
+                File.ReadAllText(_settingsFilePath), JsonOptions);
+            if (document is not null)
+            {
+                _autoStartGuard = document.AutoStartGuard;
+                _startupTarget = document.StartupTarget;
+                _restartPolicy = document.RestartPolicy ?? new HotspotRestartPolicySettings();
+                return;
+            }
+
+            migrated = true;
+        }
+        catch
+        {
+            migrated = true;
+        }
+
+        if (migrated)
+        {
+            LoadLegacyFormat();
+            Save();
+        }
+    }
+
+    private void LoadLegacyFormat()
+    {
         try
         {
             foreach (var line in File.ReadAllLines(_settingsFilePath))
@@ -83,12 +133,18 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     {
         lock (_fileLock)
         {
-            var lines = new[]
+            var document = new HotspotPluginSettingsDocument
             {
-                $"{nameof(HotspotPluginSettingsDocument.AutoStartGuard)}={_autoStartGuard}",
-                $"{nameof(HotspotPluginSettingsDocument.StartupTarget)}={_startupTarget}"
+                AutoStartGuard = _autoStartGuard,
+                StartupTarget = _startupTarget,
+                RestartPolicy = _restartPolicy
             };
-            File.WriteAllLines(_settingsFilePath, lines);
+            var json = JsonSerializer.Serialize(document, JsonOptions);
+
+            // 先写临时文件再原子替换，避免进程崩溃导致配置文件损坏。
+            var tempPath = _settingsFilePath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, _settingsFilePath, overwrite: true);
         }
     }
 }

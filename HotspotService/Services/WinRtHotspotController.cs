@@ -6,6 +6,8 @@ namespace HotspotService.Services;
 
 public sealed class WinRtHotspotController : IHotspotController
 {
+    private static readonly TimeSpan RestartTransitionDelay = TimeSpan.FromSeconds(1);
+
     public Task<HotspotActualState> GetStateAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -27,6 +29,43 @@ public sealed class WinRtHotspotController : IHotspotController
         {
             throw new InvalidOperationException($"移动热点操作失败：{result.Status}。");
         }
+    }
+
+    public async Task RestartAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var manager = CreateManager();
+        var stop = await manager.StopTetheringAsync();
+        if (stop.Status != TetheringOperationStatus.Success)
+        {
+            throw new InvalidOperationException($"移动热点停止失败：{stop.Status}。");
+        }
+
+        // 等待热点完全停止，避免紧接的启动操作被系统判定为“操作进行中”而失败。
+        await Task.Delay(RestartTransitionDelay, cancellationToken);
+
+        var start = await manager.StartTetheringAsync();
+        if (start.Status != TetheringOperationStatus.Success)
+        {
+            throw new InvalidOperationException($"移动热点启动失败：{start.Status}。");
+        }
+    }
+
+    public Task<int> GetConnectedClientCountAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var manager = CreateManager();
+        return Task.FromResult((int)manager.ClientCount);
+    }
+
+    public Task<int> GetMaxClientCountAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var manager = CreateManager();
+        return Task.FromResult((int)manager.MaxClientCount);
     }
 
     private static NetworkOperatorTetheringManager CreateManager()
