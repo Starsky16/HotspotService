@@ -12,17 +12,18 @@ using HotspotService.Services;
 namespace HotspotService.Components;
 
 /// <summary>
-/// 主界面极简展示组件：实心/空心圆点表示守护是否开启，旁边以常规字号显示连接设备数量。
+/// 主界面极简展示组件：实心圆点颜色表示守护开关（绿=开启，红=关闭），旁边以常规字号显示连接设备数量。
 /// 圆点与连接数可分别在组件设置中独立开关，设置修改即时生效。
 /// </summary>
 [ComponentInfo(
     PluginIds.HotspotStatusComponent,
     "移动热点守护",
     PluginIds.WifiGlyph,
-    "以实心/空心圆点与连接设备数展示移动热点守护状态。")]
+    "以实心圆点颜色与连接设备数展示移动热点守护状态。")]
 public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponentSettings>
 {
-    private static readonly Color EnabledDotColor = Color.FromRgb(0x2E, 0xA8, 0x4A);
+    private static readonly Color EnabledDotColor = Color.FromRgb(0x66, 0xBB, 0x6A);
+    private static readonly Color DisabledDotColor = Color.FromRgb(0xEF, 0x53, 0x50);
 
     private readonly HotspotGuardRuntimeState _runtimeState;
     private readonly TextBlock _statusDotText = new();
@@ -101,17 +102,17 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
         _statusDotText.IsVisible = settings?.ShowStatusDot ?? true;
         if (_runtimeState.GuardEnabled)
         {
-            // 守护开启：实心圆点。
+            // 守护开启：绿色实心圆点。
             _statusDotText.Text = "\u25CF";
             _statusDotText.Opacity = 1.0;
             _statusDotText.Foreground = new SolidColorBrush(EnabledDotColor);
         }
         else
         {
-            // 守护关闭：空心圆点。
-            _statusDotText.Text = "\u25CB";
-            _statusDotText.Foreground = null;
-            _statusDotText.Opacity = 0.6;
+            // 守护关闭：红色实心圆点。
+            _statusDotText.Text = "\u25CF";
+            _statusDotText.Opacity = 1.0;
+            _statusDotText.Foreground = new SolidColorBrush(DisabledDotColor);
         }
 
         _clientCountText.IsVisible = settings?.ShowClientCount ?? true;
