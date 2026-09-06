@@ -23,6 +23,7 @@ public static class Program
         await RunTestAsync("Client count is read once per periodic check", TestClientCountReadOncePerCheckAsync);
         await RunTestAsync("Periodic check refreshes connected client list", TestPeriodicCheckRefreshesConnectedClientsAsync);
         await RunTestAsync("Client list failure degrades without failing sync", TestClientListReadFailureDoesNotFailSyncAsync);
+        await RunTestAsync("Client info refresh respects configured interval", TestClientInfoRefreshRespectsIntervalAsync);
         await RunTestAsync("Settings store restart policy roundtrips", TestSettingsStoreRestartPolicyRoundtripAsync);
         await RunTestAsync("Legacy key-value settings are migrated to JSON", TestLegacyKeyValueSettingsAreMigratedAsync);
         await RunTestAsync("Auto restart triggers after consecutive failures", TestAutoRestartAfterConsecutiveFailuresAsync);
@@ -205,6 +206,7 @@ public static class Program
         context.Controller.ConnectedClientCount = 5;
         context.Controller.ResetCounts();
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
         AssertEqual(5, context.RuntimeState.ConnectedClientCount, "Periodic check should refresh the connected client count.");
@@ -225,9 +227,10 @@ public static class Program
         await context.Coordinator.InitializeAsync(CancellationToken.None);
         context.Controller.ResetCounts();
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
-        AssertEqual(1, context.Controller.GetClientCountCallCount, "Each periodic check should read the client count exactly once.");
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "A periodic check should read the client count exactly once after the interval elapses.");
     }
 
     private static Task TestSettingsStoreRestartPolicyRoundtripAsync()
@@ -321,6 +324,7 @@ public static class Program
         context.Controller.ResetCounts();
         context.Controller.ConnectedClientCount = 4;
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
         AssertEqual(1, context.Controller.StopCallCount, "Reaching the client threshold should restart the hotspot.");
@@ -340,6 +344,7 @@ public static class Program
         context.Controller.ResetCounts();
         context.Controller.ConnectedClientCount = 4;
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
@@ -389,6 +394,7 @@ public static class Program
         context.Controller.ConnectedClientCount = 4;
         context.Controller.FailNextSet = true;
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
         AssertEqual(1, context.Controller.StopCallCount, "A restart attempt should have been made.");
@@ -429,6 +435,7 @@ public static class Program
         context.Controller.ResetCounts();
         context.Controller.ConnectedClientCount = 4;
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         for (var i = 0; i < 3; i++)
         {
             await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
@@ -459,14 +466,17 @@ public static class Program
         context.Controller.ResetCounts();
         context.Controller.ConnectedClientCount = 4;
 
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
         AssertEqual(1, context.Controller.StopCallCount, "First restart should occur.");
 
         context.Controller.ConnectedClientCount = 0;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
         AssertEqual(1, context.Controller.StopCallCount, "No restart should occur while the condition is cleared.");
 
         context.Controller.ConnectedClientCount = 4;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
@@ -482,6 +492,7 @@ public static class Program
         context.Controller.ResetCounts();
 
         context.Controller.FailNextClientCountRead = true;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
         AssertEqual(0, context.Controller.SetStateCallCount, "Client count read failure should not affect the main sync.");
@@ -510,10 +521,28 @@ public static class Program
         context.Controller.ResetCounts();
 
         context.Controller.FailNextClientListRead = true;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
 
         AssertEqual(0, context.Controller.SetStateCallCount, "Client list read failure should not affect the main sync.");
         AssertTrue(string.IsNullOrWhiteSpace(context.RuntimeState.LastError), "Client list read failure should not record a sync error.");
+    }
+
+    private static async Task TestClientInfoRefreshRespectsIntervalAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.ClientCountRefreshSeconds = 5;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "Initialize should refresh client info once.");
+        context.Controller.ResetCounts();
+
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(0, context.Controller.GetClientCountCallCount, "Client info should not refresh before the configured interval elapses.");
+
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(6));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "Client info should refresh after the configured interval elapses.");
     }
 
     private static async Task TestManualRestartFailurePropagatesAsync()

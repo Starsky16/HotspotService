@@ -18,6 +18,7 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     private bool _autoStartGuard = true;
     private GuardTargetState _startupTarget = GuardTargetState.On;
     private HotspotRestartPolicySettings _restartPolicy = new();
+    private int _clientCountRefreshSeconds = 10;
 
     public HotspotPluginSettingsStore(string settingsFilePath)
     {
@@ -62,6 +63,18 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
         }
     }
 
+    public int ClientCountRefreshSeconds
+    {
+        get => _clientCountRefreshSeconds;
+        set
+        {
+            if (SetProperty(ref _clientCountRefreshSeconds, value))
+            {
+                Save();
+            }
+        }
+    }
+
     private void Load()
     {
         if (!File.Exists(_settingsFilePath))
@@ -80,6 +93,7 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 _autoStartGuard = document.AutoStartGuard;
                 _startupTarget = document.StartupTarget;
                 _restartPolicy = document.RestartPolicy ?? new HotspotRestartPolicySettings();
+                _clientCountRefreshSeconds = Math.Max(1, document.ClientCountRefreshSeconds);
                 return;
             }
 
@@ -137,7 +151,8 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
             {
                 AutoStartGuard = _autoStartGuard,
                 StartupTarget = _startupTarget,
-                RestartPolicy = _restartPolicy
+                RestartPolicy = _restartPolicy,
+                ClientCountRefreshSeconds = _clientCountRefreshSeconds
             };
             var json = JsonSerializer.Serialize(document, JsonOptions);
 

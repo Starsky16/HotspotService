@@ -28,6 +28,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private readonly Button _enableGuardButton;
     private readonly Button _disableGuardButton;
     private readonly Button _restartButton;
+    private readonly NumericUpDown _clientRefreshIntervalBox;
     private readonly TextBlock _restartTipText = new();
     private int _restartTipVersion;
     private readonly TextBlock _guardEnabledValue;
@@ -192,6 +193,45 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         maintenancePanel.Children.Add(restartRow);
         maintenancePanel.Children.Add(_restartTipText);
         mainPanel.Children.Add(maintenancePanel);
+
+        var refreshPanel = new StackPanel
+        {
+            Spacing = 8
+        };
+        refreshPanel.Children.Add(new TextBlock
+        {
+            Text = "连接数刷新间隔（秒）"
+        });
+        _clientRefreshIntervalBox = new NumericUpDown
+        {
+            Minimum = 5,
+            Maximum = 3600,
+            Increment = 5,
+            Value = Math.Max(5, _settingsStore.ClientCountRefreshSeconds),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 120
+        };
+        _clientRefreshIntervalBox.ValueChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            if (_clientRefreshIntervalBox.Value is { } value)
+            {
+                _settingsStore.ClientCountRefreshSeconds = Math.Clamp((int)value, 5, 3600);
+            }
+        };
+        refreshPanel.Children.Add(_clientRefreshIntervalBox);
+        refreshPanel.Children.Add(new TextBlock
+        {
+            Text = "连接设备数量与设备列表的刷新频率，范围 5–3600 秒。守护状态本身仍按每 10 秒一次检查，不受此设置影响。",
+            FontSize = 12,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+        mainPanel.Children.Add(refreshPanel);
 
         var statusBorder = new Border
         {

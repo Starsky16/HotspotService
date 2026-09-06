@@ -18,6 +18,7 @@ public sealed class HotspotGuardCoordinator
     private DateTimeOffset? _transitioningSince;
     private DateTimeOffset? _lastRestartAt;
     private DateTimeOffset? _autoRestartPausedUntil;
+    private DateTimeOffset? _lastClientInfoRefreshAt;
 
     public HotspotGuardCoordinator(
         IHotspotController hotspotController,
@@ -189,18 +190,38 @@ public sealed class HotspotGuardCoordinator
         }
     }
 
+    private async Task<bool> TryRefreshClientInfoIfDueAsync(
+        bool forceApply,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var interval = TimeSpan.FromSeconds(Math.Max(1, _settingsStore.ClientCountRefreshSeconds));
+        var due = forceApply
+            || _lastClientInfoRefreshAt is null
+            || now - _lastClientInfoRefreshAt.Value >= interval;
+        if (!due)
+        {
+            return false;
+        }
+
+        var changed = await TryRefreshClientStatsAsync(cancellationToken);
+        changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
+        _lastClientInfoRefreshAt = now;
+        return changed;
+    }
+
     private async Task<bool> PerformSyncAsync(bool forceApply, CancellationToken cancellationToken)
     {
         var changed = false;
+        var now = _timeProvider.GetUtcNow();
 
         try
         {
             var actualState = await _hotspotController.GetStateAsync(cancellationToken);
             changed |= _runtimeState.SetLastKnownHotspotState(actualState);
-            _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
+            _runtimeState.SetLastCheckAt(now);
 
-            changed |= await TryRefreshClientStatsAsync(cancellationToken);
-            changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
+            changed |= await TryRefreshClientInfoIfDueAsync(forceApply, now, cancellationToken);
 
             if (!forceApply && !_runtimeState.GuardEnabled)
             {
