@@ -2,6 +2,7 @@ using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Extensions.Registry;
 using HotspotService.Automation;
+using HotspotService.Components;
 using HotspotService.Models;
 using HotspotService.Services;
 using HotspotService.Settings;
@@ -48,5 +49,7 @@ public class Plugin : PluginBase
             "移动热点守护目标",
             PluginIds.WifiGlyph,
             settings => GuardEnabledRuleEvaluator.EvaluateGuardTarget(runtimeState, settings as GuardTargetRuleSettings));
+
+        services.AddComponent<HotspotStatusComponent, HotspotStatusComponentSettingsControl>();
     }
 }
