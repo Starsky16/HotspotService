@@ -10,6 +10,7 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private HotspotActualState _lastKnownHotspotState = HotspotActualState.Unknown;
     private int _connectedClientCount;
     private int _maxClientCount;
+    private IReadOnlyList<HotspotClientInfo> _connectedClients = [];
     private DateTimeOffset? _lastCheckAt;
     private string? _lastError;
 
@@ -41,6 +42,12 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _maxClientCount;
         private set => SetProperty(ref _maxClientCount, value);
+    }
+
+    public IReadOnlyList<HotspotClientInfo> ConnectedClients
+    {
+        get => _connectedClients;
+        private set => SetProperty(ref _connectedClients, value);
     }
 
     public DateTimeOffset? LastCheckAt
@@ -88,6 +95,19 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
         var changed = MaxClientCount != value;
         MaxClientCount = value;
         return changed;
+    }
+
+    public bool SetConnectedClients(IReadOnlyList<HotspotClientInfo>? value)
+    {
+        var normalized = value ?? Array.Empty<HotspotClientInfo>();
+        if (ConnectedClients.Count == normalized.Count
+            && ConnectedClients.Select(x => x.MacAddress).SequenceEqual(normalized.Select(x => x.MacAddress)))
+        {
+            return false;
+        }
+
+        ConnectedClients = normalized;
+        return true;
     }
 
     public void SetLastCheckAt(DateTimeOffset? value)

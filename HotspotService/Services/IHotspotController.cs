@@ -13,4 +13,6 @@ public interface IHotspotController
     Task<int> GetConnectedClientCountAsync(CancellationToken cancellationToken);
 
     Task<int> GetMaxClientCountAsync(CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken);
 }

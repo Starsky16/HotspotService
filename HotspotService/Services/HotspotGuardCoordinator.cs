@@ -171,6 +171,24 @@ public sealed class HotspotGuardCoordinator
         }
     }
 
+    private async Task<bool> TryRefreshConnectedClientsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var clients = await _hotspotController.GetConnectedClientsAsync(cancellationToken);
+            return _runtimeState.SetConnectedClients(clients);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // 设备列表读取失败不判定主同步失败，仅降级保留上次列表。
+            return false;
+        }
+    }
+
     private async Task<bool> PerformSyncAsync(bool forceApply, CancellationToken cancellationToken)
     {
         var changed = false;
@@ -182,6 +200,7 @@ public sealed class HotspotGuardCoordinator
             _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
 
             changed |= await TryRefreshClientStatsAsync(cancellationToken);
+            changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
 
             if (!forceApply && !_runtimeState.GuardEnabled)
             {

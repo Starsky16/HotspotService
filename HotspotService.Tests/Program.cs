@@ -21,6 +21,8 @@ public static class Program
         await RunTestAsync("Periodic check refreshes connected client count", TestPeriodicCheckRefreshesClientCountAsync);
         await RunTestAsync("Client count is zero while hotspot is off", TestClientCountZeroWhileHotspotOffAsync);
         await RunTestAsync("Client count is read once per periodic check", TestClientCountReadOncePerCheckAsync);
+        await RunTestAsync("Periodic check refreshes connected client list", TestPeriodicCheckRefreshesConnectedClientsAsync);
+        await RunTestAsync("Client list failure degrades without failing sync", TestClientListReadFailureDoesNotFailSyncAsync);
         await RunTestAsync("Settings store restart policy roundtrips", TestSettingsStoreRestartPolicyRoundtripAsync);
         await RunTestAsync("Legacy key-value settings are migrated to JSON", TestLegacyKeyValueSettingsAreMigratedAsync);
         await RunTestAsync("Auto restart triggers after consecutive failures", TestAutoRestartAfterConsecutiveFailuresAsync);
@@ -486,6 +488,34 @@ public static class Program
         AssertTrue(string.IsNullOrWhiteSpace(context.RuntimeState.LastError), "Client count read failure should not record a sync error.");
     }
 
+    private static async Task TestPeriodicCheckRefreshesConnectedClientsAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.Controller.ConnectedClients =
+        [
+            new HotspotClientInfo("AA:BB:CC:DD:EE:FF", ["device-a"]),
+            new HotspotClientInfo("11:22:33:44:55:66", ["device-b"])
+        ];
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        AssertEqual(2, context.RuntimeState.ConnectedClients.Count, "Sync should refresh the connected client list.");
+        AssertEqual("AA:BB:CC:DD:EE:FF", context.RuntimeState.ConnectedClients[0].MacAddress, "Client list should preserve the MAC address.");
+        AssertEqual("device-b", context.RuntimeState.ConnectedClients[1].HostNames[0], "Client list should preserve host names.");
+    }
+
+    private static async Task TestClientListReadFailureDoesNotFailSyncAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        context.Controller.ResetCounts();
+
+        context.Controller.FailNextClientListRead = true;
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(0, context.Controller.SetStateCallCount, "Client list read failure should not affect the main sync.");
+        AssertTrue(string.IsNullOrWhiteSpace(context.RuntimeState.LastError), "Client list read failure should not record a sync error.");
+    }
+
     private static async Task TestManualRestartFailurePropagatesAsync()
     {
         var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
@@ -593,7 +623,11 @@ public static class Program
 
         public int MaxClientCount { get; set; } = 8;
 
+        public IReadOnlyList<HotspotClientInfo> ConnectedClients { get; set; } = [];
+
         public bool FailNextClientCountRead { get; set; }
+
+        public bool FailNextClientListRead { get; set; }
 
         public int GetStateCallCount { get; private set; }
 
@@ -604,6 +638,8 @@ public static class Program
         public int StopCallCount { get; private set; }
 
         public int GetClientCountCallCount { get; private set; }
+
+        public int GetClientListCallCount { get; private set; }
 
         public int MaxConcurrentSetCalls { get; private set; }
 
@@ -630,6 +666,18 @@ public static class Program
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(MaxClientCount);
+        }
+
+        public Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            GetClientListCallCount++;
+            if (FailNextClientListRead)
+            {
+                FailNextClientListRead = false;
+                throw new InvalidOperationException("Simulated client list read failure.");
+            }
+            return Task.FromResult(ConnectedClients);
         }
 
         public async Task SetStateAsync(GuardTargetState target, CancellationToken cancellationToken)
@@ -681,6 +729,7 @@ public static class Program
             StartCallCount = 0;
             StopCallCount = 0;
             GetClientCountCallCount = 0;
+            GetClientListCallCount = 0;
             MaxConcurrentSetCalls = 0;
             _concurrentSetCalls = 0;
         }

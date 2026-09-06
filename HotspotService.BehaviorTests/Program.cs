@@ -136,6 +136,8 @@ public static class Program
 
         public int MaxClientCount { get; set; } = 8;
 
+        public IReadOnlyList<HotspotClientInfo> ConnectedClients { get; set; } = [];
+
         public int StartCallCount { get; private set; }
 
         public int StopCallCount { get; private set; }
@@ -156,6 +158,12 @@ public static class Program
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(MaxClientCount);
+        }
+
+        public Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(ConnectedClients);
         }
 
         public Task SetStateAsync(GuardTargetState target, CancellationToken cancellationToken)

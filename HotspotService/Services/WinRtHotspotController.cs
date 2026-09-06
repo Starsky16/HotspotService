@@ -68,6 +68,24 @@ public sealed class WinRtHotspotController : IHotspotController
         return Task.FromResult((int)manager.MaxClientCount);
     }
 
+    public Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var manager = CreateManager();
+        var clients = manager.GetTetheringClients();
+
+        var result = new List<HotspotClientInfo>(clients.Count);
+        foreach (var client in clients)
+        {
+            result.Add(new HotspotClientInfo(
+                client.MacAddress,
+                client.HostNames.Select(x => x.RawName).ToArray()));
+        }
+
+        return Task.FromResult<IReadOnlyList<HotspotClientInfo>>(result);
+    }
+
     private static NetworkOperatorTetheringManager CreateManager()
     {
         var profile = NetworkInformation.GetInternetConnectionProfile();
