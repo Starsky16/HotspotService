@@ -50,6 +50,6 @@ public class Plugin : PluginBase
             PluginIds.WifiGlyph,
             settings => GuardEnabledRuleEvaluator.EvaluateGuardTarget(runtimeState, settings as GuardTargetRuleSettings));
 
-        services.AddComponent<HotspotStatusComponent>();
+        services.AddComponent<HotspotStatusComponent, HotspotStatusComponentSettingsControl>();
     }
 }
