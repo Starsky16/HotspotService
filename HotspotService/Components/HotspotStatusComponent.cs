@@ -6,56 +6,47 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
-using HotspotService.Models;
 using HotspotService.Services;
 
 namespace HotspotService.Components;
 
 /// <summary>
-/// 主界面展示组件：实时展示移动热点守护状态、系统热点状态与连接设备数量。
+/// 主界面极简展示组件：实心/空心圆点表示守护是否开启，旁边以大号纯数字显示连接设备数量。
 /// </summary>
 [ComponentInfo(
     PluginIds.HotspotStatusComponent,
     "移动热点守护",
     PluginIds.WifiGlyph,
-    "显示移动热点守护状态、系统热点状态与连接设备数量。")]
-public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponentSettings>
+    "以实心/空心圆点与连接设备数展示移动热点守护状态。")]
+public sealed class HotspotStatusComponent : ComponentBase
 {
+    private static readonly Color EnabledDotColor = Color.FromRgb(0x2E, 0xA8, 0x4A);
+
     private readonly HotspotGuardRuntimeState _runtimeState;
-    private readonly Grid _guardEnabledRow;
-    private readonly Grid _hotspotStateRow;
-    private readonly Grid _clientCountRow;
-    private readonly Grid _lastErrorRow;
-    private readonly TextBlock _guardEnabledValue = new();
-    private readonly TextBlock _hotspotStateValue = new();
-    private readonly TextBlock _clientCountValue = new();
-    private readonly TextBlock _lastErrorValue = new();
+    private readonly TextBlock _statusDotText = new();
+    private readonly TextBlock _clientCountText = new();
 
     public HotspotStatusComponent(HotspotGuardRuntimeState runtimeState)
     {
         _runtimeState = runtimeState;
 
+        _clientCountText.FontSize = 32;
+        _clientCountText.FontWeight = FontWeight.SemiBold;
+        _clientCountText.VerticalAlignment = VerticalAlignment.Center;
+        _clientCountText.TextAlignment = TextAlignment.Center;
+
+        _statusDotText.FontSize = 20;
+        _statusDotText.VerticalAlignment = VerticalAlignment.Center;
+
         var panel = new StackPanel
         {
-            Spacing = 6
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        panel.Children.Add(new TextBlock
-        {
-            Text = "移动热点守护",
-            FontSize = 15,
-            FontWeight = FontWeight.SemiBold
-        });
-
-        _guardEnabledRow = CreateStatusRow("守护状态", _guardEnabledValue);
-        _hotspotStateRow = CreateStatusRow("系统热点", _hotspotStateValue);
-        _clientCountRow = CreateStatusRow("连接设备", _clientCountValue);
-        _lastErrorRow = CreateStatusRow("最近错误", _lastErrorValue, wrapValue: true);
-
-        panel.Children.Add(_guardEnabledRow);
-        panel.Children.Add(_hotspotStateRow);
-        panel.Children.Add(_clientCountRow);
-        panel.Children.Add(_lastErrorRow);
-
+        _statusDotText.VerticalAlignment = VerticalAlignment.Center;
+        panel.Children.Add(_statusDotText);
+        panel.Children.Add(_clientCountText);
         Content = panel;
 
         _runtimeState.PropertyChanged += OnRuntimeStatePropertyChanged;
@@ -80,32 +71,22 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
 
     private void UpdateUi()
     {
-        var settings = Settings;
-        _guardEnabledValue.Text = _runtimeState.GuardEnabled ? "已开启" : "已关闭";
-        _hotspotStateValue.Text = _runtimeState.LastKnownHotspotState.ToDisplayText();
-
-        _clientCountRow.IsVisible = settings?.ShowClientCount ?? true;
-        _clientCountValue.Text = $"{_runtimeState.ConnectedClientCount} / {_runtimeState.MaxClientCount}";
-
-        _lastErrorRow.IsVisible = settings?.ShowLastError ?? false;
-        _lastErrorValue.Text = string.IsNullOrWhiteSpace(_runtimeState.LastError) ? "无" : _runtimeState.LastError;
-    }
-
-    private static Grid CreateStatusRow(string label, TextBlock valueBlock, bool wrapValue = false)
-    {
-        valueBlock.TextWrapping = wrapValue ? TextWrapping.Wrap : TextWrapping.NoWrap;
-
-        var grid = new Grid
+        if (_runtimeState.GuardEnabled)
         {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*")
-        };
-        grid.Children.Add(new TextBlock
+            // 守护开启：实心圆点。
+            _statusDotText.Text = "\u25CF";
+            _statusDotText.Opacity = 1.0;
+            _statusDotText.Foreground = new SolidColorBrush(EnabledDotColor);
+        }
+        else
         {
-            Text = $"{label}：",
-            Opacity = 0.75
-        });
-        Grid.SetColumn(valueBlock, 1);
-        grid.Children.Add(valueBlock);
-        return grid;
+            // 守护关闭：空心圆点。
+            _statusDotText.Text = "\u25CB";
+            _statusDotText.Foreground = null;
+            _statusDotText.Opacity = 0.6;
+        }
+
+        _clientCountText.Text = _runtimeState.ConnectedClientCount.ToString();
     }
 }
+
