@@ -15,4 +15,9 @@ public interface IHotspotController
     Task<int> GetMaxClientCountAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 探测当前设备是否支持开启移动热点（例如是否具备可用的 Wi-Fi 网卡）。
+    /// </summary>
+    Task<HotspotSupportState> GetTetheringSupportAsync(CancellationToken cancellationToken);
 }

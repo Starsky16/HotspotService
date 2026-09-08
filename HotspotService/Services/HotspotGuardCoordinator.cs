@@ -248,6 +248,22 @@ public sealed class HotspotGuardCoordinator
 
         try
         {
+            var support = await _hotspotController.GetTetheringSupportAsync(cancellationToken);
+            changed |= _runtimeState.SetTetheringSupport(support);
+
+            if (support == HotspotSupportState.NotSupported)
+            {
+                // 设备无法开启热点（如没有可用的 Wi-Fi 网卡）：不尝试任何启停或客户端读取，
+                // 客户端信息清零，界面据此显示 “None”。
+                _consecutiveFailureCount = 0;
+                _transitioningSince = null;
+                _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
+                _runtimeState.SetLastError(null);
+                changed |= _runtimeState.SetConnectedClientCount(0);
+                changed |= _runtimeState.SetConnectedClients(Array.Empty<HotspotClientInfo>());
+                return changed;
+            }
+
             var previousState = _runtimeState.LastKnownHotspotState;
             var actualState = await _hotspotController.GetStateAsync(cancellationToken);
             changed |= _runtimeState.SetLastKnownHotspotState(actualState);

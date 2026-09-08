@@ -138,6 +138,8 @@ public static class Program
 
         public IReadOnlyList<HotspotClientInfo> ConnectedClients { get; set; } = [];
 
+        public HotspotSupportState TetheringSupport { get; set; } = HotspotSupportState.Supported;
+
         public int StartCallCount { get; private set; }
 
         public int StopCallCount { get; private set; }
@@ -164,6 +166,12 @@ public static class Program
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(ConnectedClients);
+        }
+
+        public Task<HotspotSupportState> GetTetheringSupportAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(TetheringSupport);
         }
 
         public Task SetStateAsync(GuardTargetState target, CancellationToken cancellationToken)

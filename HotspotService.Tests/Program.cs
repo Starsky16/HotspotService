@@ -26,6 +26,7 @@ public static class Program
         await RunTestAsync("Client info refresh respects configured interval", TestClientInfoRefreshRespectsIntervalAsync);
         await RunTestAsync("Client info refresh is forced after guard restarts hotspot", TestRefreshForcedAfterGuardRestartsHotspotAsync);
         await RunTestAsync("Client-count restart ignored while hotspot is not running", TestClientCountRestartIgnoredWhileHotspotNotRunningAsync);
+        await RunTestAsync("Unsupported device reports None and skips hotspot operations", TestUnsupportedDeviceSkipsOperationsAsync);
         await RunTestAsync("Settings store restart policy roundtrips", TestSettingsStoreRestartPolicyRoundtripAsync);
         await RunTestAsync("Legacy key-value settings are migrated to JSON", TestLegacyKeyValueSettingsAreMigratedAsync);
         await RunTestAsync("Auto restart triggers after consecutive failures", TestAutoRestartAfterConsecutiveFailuresAsync);
@@ -582,6 +583,25 @@ public static class Program
         AssertEqual(0, context.Controller.StopCallCount, "Stale client count must not trigger a restart while the hotspot is not running.");
     }
 
+    private static async Task TestUnsupportedDeviceSkipsOperationsAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.Controller.TetheringSupport = HotspotSupportState.NotSupported;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        AssertEqual(HotspotSupportState.NotSupported, context.RuntimeState.TetheringSupport, "Support state should be recorded.");
+        AssertEqual(0, context.RuntimeState.ConnectedClientCount, "Client count should be zero on unsupported hardware.");
+        AssertEqual(0, context.Controller.GetStateCallCount, "Unsupported hardware should not trigger hotspot state reads.");
+        AssertEqual(0, context.Controller.GetClientCountCallCount, "Unsupported hardware should not trigger client reads.");
+        AssertEqual(0, context.Controller.StartCallCount, "Unsupported hardware should not try to start the hotspot.");
+        AssertTrue(string.IsNullOrWhiteSpace(context.RuntimeState.LastError), "Unsupported hardware should not record a sync error.");
+
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(0, context.Controller.GetStateCallCount, "Periodic checks should keep skipping operations on unsupported hardware.");
+        AssertEqual(0, context.Controller.StartCallCount, "Periodic checks should keep skipping start attempts on unsupported hardware.");
+    }
+
     private static async Task TestManualRestartFailurePropagatesAsync()
     {
         var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
@@ -691,6 +711,8 @@ public static class Program
 
         public IReadOnlyList<HotspotClientInfo> ConnectedClients { get; set; } = [];
 
+        public HotspotSupportState TetheringSupport { get; set; } = HotspotSupportState.Supported;
+
         public bool FailNextClientCountRead { get; set; }
 
         public bool FailNextClientListRead { get; set; }
@@ -744,6 +766,12 @@ public static class Program
                 throw new InvalidOperationException("Simulated client list read failure.");
             }
             return Task.FromResult(ConnectedClients);
+        }
+
+        public Task<HotspotSupportState> GetTetheringSupportAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(TetheringSupport);
         }
 
         public async Task SetStateAsync(GuardTargetState target, CancellationToken cancellationToken)

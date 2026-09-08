@@ -17,7 +17,7 @@ public sealed class HotspotStatusComponentSettingsControl : ComponentBase<Hotspo
     };
     private readonly CheckBox _showClientCountCheckBox = new()
     {
-        Content = "显示连接设备数量"
+        Content = "显示设备数量（不支持时显示 None，关闭时显示 Off）"
     };
     private bool _updatingUi;
 

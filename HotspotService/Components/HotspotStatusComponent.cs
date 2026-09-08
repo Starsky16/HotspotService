@@ -13,14 +13,14 @@ namespace HotspotService.Components;
 
 /// <summary>
 /// 主界面极简展示组件：实心圆点颜色表示守护开关（绿=开启，红=关闭），
-/// 旁边显示连接设备数量，热点实际关闭时显示 “Off”。
-/// 圆点与数字可分别在组件设置中独立开关，设置修改即时生效。
+/// 旁边显示连接设备数量；设备不支持热点时显示 “None”，热点关闭时显示 “Off”。
+/// 圆点与文字可在组件设置中独立开关，设置修改即时生效。
 /// </summary>
 [ComponentInfo(
     PluginIds.HotspotStatusComponent,
     "移动热点守护",
     PluginIds.WifiGlyph,
-    "以实心圆点颜色与连接设备数展示移动热点守护状态（热点关闭时显示 Off）。")]
+    "以圆点与文字展示守护状态与连接设备数（不支持时显示 None，关闭时显示 Off）。")]
 public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponentSettings>
 {
     private static readonly Color EnabledDotColor = Color.FromRgb(0x66, 0xBB, 0x6A);
@@ -117,11 +117,11 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
         }
 
         _clientCountText.IsVisible = settings?.ShowClientCount ?? true;
-        // 热点实际关闭时以 “Off” 明示，避免用容易误导的 0 表示；运行中显示真实连接数。
+        // 设备不支持热点（如无 Wi-Fi 网卡）显示 None；热点关闭显示 Off；运行中显示真实连接数。
         _clientCountText.Text =
-            _runtimeState.LastKnownHotspotState == HotspotActualState.Off
-                ? "Off"
-                : _runtimeState.ConnectedClientCount.ToString();
+            _runtimeState.TetheringSupport == HotspotSupportState.NotSupported ? "None"
+            : _runtimeState.LastKnownHotspotState == HotspotActualState.Off ? "Off"
+            : _runtimeState.ConnectedClientCount.ToString();
     }
 }
 

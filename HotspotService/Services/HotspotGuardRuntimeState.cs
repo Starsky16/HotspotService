@@ -8,6 +8,7 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private bool _guardEnabled;
     private GuardTargetState _guardTarget = GuardTargetState.On;
     private HotspotActualState _lastKnownHotspotState = HotspotActualState.Unknown;
+    private HotspotSupportState _tetheringSupport;
     private int _connectedClientCount;
     private int _maxClientCount;
     private IReadOnlyList<HotspotClientInfo> _connectedClients = [];
@@ -30,6 +31,15 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _lastKnownHotspotState;
         private set => SetProperty(ref _lastKnownHotspotState, value);
+    }
+
+    /// <summary>
+    /// 当前设备是否支持开启移动热点。
+    /// </summary>
+    public HotspotSupportState TetheringSupport
+    {
+        get => _tetheringSupport;
+        private set => SetProperty(ref _tetheringSupport, value);
     }
 
     public int ConnectedClientCount
@@ -80,6 +90,13 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         var changed = LastKnownHotspotState != value;
         LastKnownHotspotState = value;
+        return changed;
+    }
+
+    public bool SetTetheringSupport(HotspotSupportState value)
+    {
+        var changed = TetheringSupport != value;
+        TetheringSupport = value;
         return changed;
     }
 

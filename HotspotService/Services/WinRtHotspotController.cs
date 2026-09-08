@@ -88,6 +88,31 @@ public sealed class WinRtHotspotController : IHotspotController
         return Task.FromResult<IReadOnlyList<HotspotClientInfo>>(result);
     }
 
+    public Task<HotspotSupportState> GetTetheringSupportAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            var profile = NetworkInformation.GetInternetConnectionProfile();
+            if (profile is null)
+            {
+                // 没有可供共享的当前连接，无法判断是否具备热点能力。
+                return Task.FromResult(HotspotSupportState.Unknown);
+            }
+
+            var capability = NetworkOperatorTetheringManager.GetTetheringCapabilityFromConnectionProfile(profile);
+            return Task.FromResult(capability == TetheringCapability.Enabled
+                ? HotspotSupportState.Supported
+                : HotspotSupportState.NotSupported);
+        }
+        catch
+        {
+            // 探测失败按“无法判断”处理，避免误报不支持导致功能被跳过。
+            return Task.FromResult(HotspotSupportState.Unknown);
+        }
+    }
+
     private static NetworkOperatorTetheringManager CreateManager()
     {
         var profile = NetworkInformation.GetInternetConnectionProfile();
