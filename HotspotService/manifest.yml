@@ -9,7 +9,7 @@ description: 为 ClassIsland 提供 Windows 移动热点守护、守护目标同
 entranceAssembly: "HotspotService.dll"
 url: https://github.com/Alan-CRL/HotspotService
 version: 0.2.0.0
-apiVersion: 2.0.0.0
+apiVersion: 2.2.0.0
 author: AlanCRL
 supportedOSPlatforms:
   - Windows

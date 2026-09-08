@@ -1,17 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
+        <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+        <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
-    <PropertyGroup>
-        <ClassIslandPluginSdkVersion>2.0.0.2</ClassIslandPluginSdkVersion>
-    </PropertyGroup>
-
     <ItemGroup>
-        <PackageReference Include="ClassIsland.PluginSdk" Version="$(ClassIslandPluginSdkVersion)" GeneratePathProperty="true">
+        <PackageReference Include="ClassIsland.PluginSdk" Version="2.1.1.1" GeneratePathProperty="true">
             <ExcludeAssets>runtime; native</ExcludeAssets>
         </PackageReference>
     </ItemGroup>
@@ -51,7 +48,7 @@
                       DestinationFile="$(ClassIslandPublishCipxOutputPath)" />
         <Delete Files="$(CipxPackageOutputDirectory)\checksums.md"
                 Condition="Exists('$(CipxPackageOutputDirectory)\checksums.md')" />
-        <Exec Command="$(PowershellBinaryName) -ep bypass -NoLogo -File &quot;$(PkgClassIsland_PluginSdk)\build\net8.0\generate-md5.ps1&quot; &quot;$(CipxPackageOutputDirectory)&quot;"
+        <Exec Command="$(PowershellBinaryName) -ep bypass -NoLogo -File &quot;$(PkgClassIsland_PluginSdk)\build\net10.0\generate-md5.ps1&quot; &quot;$(CipxPackageOutputDirectory)&quot;"
               Condition="'$(GenerateHashSummary)'=='true'" />
     </Target>
 
