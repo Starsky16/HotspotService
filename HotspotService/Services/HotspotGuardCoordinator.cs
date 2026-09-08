@@ -190,6 +190,14 @@ public sealed class HotspotGuardCoordinator
         }
     }
 
+    private async Task<bool> TryRefreshClientInfoAsync(CancellationToken cancellationToken)
+    {
+        var changed = await TryRefreshClientStatsAsync(cancellationToken);
+        changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
+        _lastClientInfoRefreshAt = _timeProvider.GetUtcNow();
+        return changed;
+    }
+
     private async Task<bool> TryRefreshClientInfoIfDueAsync(
         bool forceApply,
         DateTimeOffset now,
@@ -204,10 +212,33 @@ public sealed class HotspotGuardCoordinator
             return false;
         }
 
-        var changed = await TryRefreshClientStatsAsync(cancellationToken);
-        changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
-        _lastClientInfoRefreshAt = now;
-        return changed;
+        return await TryRefreshClientInfoAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 按热点实际状态刷新客户端信息：关闭时确定性清零（避免旧值误判/误导）；
+    /// 切换中不读取（避免瞬时 0 覆盖真实数据）；运行中按配置间隔刷新，
+    /// 刚启动或由非运行态切到运行态时可强制立即刷新一次。
+    /// </summary>
+    private async Task<bool> SyncClientInfoForStateAsync(
+        HotspotActualState state,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        switch (state)
+        {
+            case HotspotActualState.Off:
+                var offChanged = _runtimeState.SetConnectedClientCount(0);
+                offChanged |= _runtimeState.SetConnectedClients(Array.Empty<HotspotClientInfo>());
+                _lastClientInfoRefreshAt = _timeProvider.GetUtcNow();
+                return offChanged;
+
+            case HotspotActualState.Transitioning:
+                return false;
+
+            default:
+                return await TryRefreshClientInfoIfDueAsync(forceRefresh, _timeProvider.GetUtcNow(), cancellationToken);
+        }
     }
 
     private async Task<bool> PerformSyncAsync(bool forceApply, CancellationToken cancellationToken)
@@ -217,18 +248,20 @@ public sealed class HotspotGuardCoordinator
 
         try
         {
+            var previousState = _runtimeState.LastKnownHotspotState;
             var actualState = await _hotspotController.GetStateAsync(cancellationToken);
             changed |= _runtimeState.SetLastKnownHotspotState(actualState);
             _runtimeState.SetLastCheckAt(now);
 
-            changed |= await TryRefreshClientInfoIfDueAsync(forceApply, now, cancellationToken);
-
             if (!forceApply && !_runtimeState.GuardEnabled)
             {
+                // 守护关闭：仅做展示性刷新，不干预系统热点。
+                changed |= await SyncClientInfoForStateAsync(actualState, forceRefresh: false, cancellationToken);
                 _runtimeState.SetLastError(null);
                 return changed;
             }
 
+            var justStarted = false;
             if (actualState == HotspotActualState.Transitioning)
             {
                 _transitioningSince ??= _timeProvider.GetUtcNow();
@@ -242,6 +275,7 @@ public sealed class HotspotGuardCoordinator
                 if (actualState != targetState)
                 {
                     await _hotspotController.SetStateAsync(_runtimeState.GuardTarget, cancellationToken);
+                    justStarted = targetState == HotspotActualState.On;
                     actualState = await _hotspotController.GetStateAsync(cancellationToken);
                     changed |= _runtimeState.SetLastKnownHotspotState(actualState);
                     _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
@@ -250,6 +284,14 @@ public sealed class HotspotGuardCoordinator
                 _runtimeState.SetLastError(null);
                 _consecutiveFailureCount = 0;
             }
+
+            // 热点刚被守护拉起，或刚从关闭/切换中切到运行态时强制刷新一次，
+            // 让连接数尽快反映真实状态（不会被“间隔门控”拖延）。
+            var transitionedToRunning = previousState != HotspotActualState.On && actualState == HotspotActualState.On;
+            changed |= await SyncClientInfoForStateAsync(
+                actualState,
+                forceRefresh: forceApply || justStarted || transitionedToRunning,
+                cancellationToken);
         }
         catch (Exception ex)
         {
@@ -319,7 +361,11 @@ public sealed class HotspotGuardCoordinator
             return true;
         }
 
-        if (policy.ClientCountThreshold > 0 && _runtimeState.ConnectedClientCount >= policy.ClientCountThreshold)
+        // 热点未运行（关闭/切换中）时连接数无意义且可能是残留旧值，
+        // 不能作为重启依据，否则会出现在刚被守护拉起后又被“顶掉”的反复重启。
+        if (policy.ClientCountThreshold > 0
+            && _runtimeState.LastKnownHotspotState == HotspotActualState.On
+            && _runtimeState.ConnectedClientCount >= policy.ClientCountThreshold)
         {
             return true;
         }
@@ -345,6 +391,13 @@ public sealed class HotspotGuardCoordinator
         var changed = _runtimeState.SetLastKnownHotspotState(actualState);
         _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
         _runtimeState.SetLastError(null);
+
+        // 重启会断开全部设备再重新接入，立即强制刷新一次，
+        // 避免间隔门控让界面继续显示重启前的旧连接数。
+        if (actualState == HotspotActualState.On)
+        {
+            changed |= await TryRefreshClientInfoAsync(cancellationToken);
+        }
 
         return changed;
     }

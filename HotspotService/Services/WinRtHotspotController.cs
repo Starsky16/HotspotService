@@ -78,9 +78,11 @@ public sealed class WinRtHotspotController : IHotspotController
         var result = new List<HotspotClientInfo>(clients.Count);
         foreach (var client in clients)
         {
-            result.Add(new HotspotClientInfo(
-                client.MacAddress,
-                client.HostNames.Select(x => x.RawName).ToArray()));
+            var hostNames = client.HostNames?
+                .Select(x => x.RawName ?? string.Empty)
+                .Where(x => x.Length > 0)
+                .ToArray() ?? [];
+            result.Add(new HotspotClientInfo(client.MacAddress ?? string.Empty, hostNames));
         }
 
         return Task.FromResult<IReadOnlyList<HotspotClientInfo>>(result);

@@ -24,6 +24,8 @@ public static class Program
         await RunTestAsync("Periodic check refreshes connected client list", TestPeriodicCheckRefreshesConnectedClientsAsync);
         await RunTestAsync("Client list failure degrades without failing sync", TestClientListReadFailureDoesNotFailSyncAsync);
         await RunTestAsync("Client info refresh respects configured interval", TestClientInfoRefreshRespectsIntervalAsync);
+        await RunTestAsync("Client info refresh is forced after guard restarts hotspot", TestRefreshForcedAfterGuardRestartsHotspotAsync);
+        await RunTestAsync("Client-count restart ignored while hotspot is not running", TestClientCountRestartIgnoredWhileHotspotNotRunningAsync);
         await RunTestAsync("Settings store restart policy roundtrips", TestSettingsStoreRestartPolicyRoundtripAsync);
         await RunTestAsync("Legacy key-value settings are migrated to JSON", TestLegacyKeyValueSettingsAreMigratedAsync);
         await RunTestAsync("Auto restart triggers after consecutive failures", TestAutoRestartAfterConsecutiveFailuresAsync);
@@ -543,6 +545,41 @@ public static class Program
         context.TimeProvider.Advance(TimeSpan.FromSeconds(6));
         await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
         AssertEqual(1, context.Controller.GetClientCountCallCount, "Client info should refresh after the configured interval elapses.");
+    }
+
+    private static async Task TestRefreshForcedAfterGuardRestartsHotspotAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.ClientCountRefreshSeconds = 3600;
+        context.Controller.ConnectedClientCount = 3;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        context.Controller.ResetCounts();
+
+        // 模拟：系统设置里手动关闭热点后，守护把热点重新拉起。
+        context.Controller.CurrentState = HotspotActualState.Off;
+        context.Controller.ConnectedClientCount = 5;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(1, context.Controller.StartCallCount, "Guard should restart the hotspot after a manual shutdown.");
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "Transition to running should force an immediate client count refresh.");
+        AssertEqual(5, context.RuntimeState.ConnectedClientCount, "Client count should reflect the refreshed value after restart.");
+    }
+
+    private static async Task TestClientCountRestartIgnoredWhileHotspotNotRunningAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.Transitioning, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.RestartPolicy.EnableAutoRestart = true;
+        context.SettingsStore.RestartPolicy.ClientCountThreshold = 3;
+        context.SettingsStore.RestartPolicy.RestartCooldownSeconds = 0;
+        context.Controller.ConnectedClientCount = 8;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        context.Controller.ResetCounts();
+
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(0, context.Controller.StopCallCount, "Stale client count must not trigger a restart while the hotspot is not running.");
     }
 
     private static async Task TestManualRestartFailurePropagatesAsync()
