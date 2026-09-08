@@ -253,12 +253,13 @@ public sealed class HotspotGuardCoordinator
 
             if (support == HotspotSupportState.NotSupported)
             {
-                // 设备无法开启热点（如没有可用的 Wi-Fi 网卡）：不尝试任何启停或客户端读取，
-                // 客户端信息清零，界面据此显示 “None”。
+                // 设备无法开启热点（如没有 Wi-Fi 网卡）：不尝试任何启停或客户端读取，
+                // 客户端信息清零、热点状态记为关闭，界面据此显示 “None”。
                 _consecutiveFailureCount = 0;
                 _transitioningSince = null;
                 _runtimeState.SetLastCheckAt(_timeProvider.GetUtcNow());
                 _runtimeState.SetLastError(null);
+                changed |= _runtimeState.SetLastKnownHotspotState(HotspotActualState.Off);
                 changed |= _runtimeState.SetConnectedClientCount(0);
                 changed |= _runtimeState.SetConnectedClients(Array.Empty<HotspotClientInfo>());
                 return changed;

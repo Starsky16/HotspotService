@@ -92,12 +92,18 @@ public sealed class WinRtHotspotController : IHotspotController
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // 无 Wi-Fi 网卡时 Windows 无法开启移动热点，直接判定为不支持。
+        if (!HasWiFiAdapter())
+        {
+            return Task.FromResult(HotspotSupportState.NotSupported);
+        }
+
         try
         {
             var profile = NetworkInformation.GetInternetConnectionProfile();
             if (profile is null)
             {
-                // 没有可供共享的当前连接，无法判断是否具备热点能力。
+                // 有 Wi-Fi 网卡但暂无可用连接档案：按“无法判断”处理，避免误报。
                 return Task.FromResult(HotspotSupportState.Unknown);
             }
 
@@ -111,6 +117,26 @@ public sealed class WinRtHotspotController : IHotspotController
             // 探测失败按“无法判断”处理，避免误报不支持导致功能被跳过。
             return Task.FromResult(HotspotSupportState.Unknown);
         }
+    }
+
+    private static bool HasWiFiAdapter()
+    {
+        try
+        {
+            foreach (var networkInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211)
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // 查询失败时不在此处下结论，交由后续能力探测决定。
+        }
+
+        return false;
     }
 
     private static NetworkOperatorTetheringManager CreateManager()

@@ -590,6 +590,7 @@ public static class Program
         await context.Coordinator.InitializeAsync(CancellationToken.None);
 
         AssertEqual(HotspotSupportState.NotSupported, context.RuntimeState.TetheringSupport, "Support state should be recorded.");
+        AssertEqual(HotspotActualState.Off, context.RuntimeState.LastKnownHotspotState, "Hotspot state should read as off on unsupported hardware.");
         AssertEqual(0, context.RuntimeState.ConnectedClientCount, "Client count should be zero on unsupported hardware.");
         AssertEqual(0, context.Controller.GetStateCallCount, "Unsupported hardware should not trigger hotspot state reads.");
         AssertEqual(0, context.Controller.GetClientCountCallCount, "Unsupported hardware should not trigger client reads.");
