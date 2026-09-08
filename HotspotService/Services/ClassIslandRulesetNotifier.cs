@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Services;
 
 namespace HotspotService.Services;
@@ -13,6 +14,6 @@ public sealed class ClassIslandRulesetNotifier : IGuardStatusNotifier
 
     public void NotifyGuardStatusChanged()
     {
-        _rulesetService.NotifyStatusChanged();
+        Dispatcher.UIThread.Invoke(() => _rulesetService.NotifyStatusChanged());
     }
 }
