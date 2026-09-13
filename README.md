@@ -79,7 +79,7 @@ dotnet run --project .\HotspotService.BehaviorTests\HotspotService.BehaviorTests
 
 > 在 Linux/macOS 上交叉构建或运行测试时，需要为 `dotnet` 命令追加 `-p:EnableWindowsTargeting=true`。
 
-依赖说明：插件引用 NuGet 包 `Starsky16.KeyboardCapture.Abstractions`（KeyboardCapture 插件的共享接口包）实现快捷键功能。若该包尚未发布到 nuget.org，本地开发时可临时在仓库根目录放一个 `nuget.config` 指向本地包目录，还原通过后再删除（该文件不进入版本库，已写入 `.git/info/exclude`）。
+依赖说明：插件引用 NuGet 包 [`Starsky16.KeyboardCapture.Abstractions`](https://www.nuget.org/packages/Starsky16.KeyboardCapture.Abstractions)（KeyboardCapture 插件的共享接口包）实现快捷键功能，正常 `dotnet restore` 即从 nuget.org 还原。仅在内网 / 离线环境下才需要临时在仓库根目录放一个 `nuget.config` 指向本地包目录（该文件不进入版本库）。
 
 ## 许可证
 
