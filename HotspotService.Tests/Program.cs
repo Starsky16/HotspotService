@@ -1,3 +1,4 @@
+using System.Net.NetworkInformation;
 using HotspotService.Automation;
 using HotspotService.Models;
 using HotspotService.Services;
@@ -40,6 +41,11 @@ public static class Program
         await RunTestAsync("Restart counter resets when condition clears", TestRestartCountResetsWhenConditionClearsAsync);
         await RunTestAsync("Client count read failure does not fail sync", TestClientCountReadFailureDoesNotFailSyncAsync);
         await RunTestAsync("Failed manual restart propagates exception", TestManualRestartFailurePropagatesAsync);
+        await RunTestAsync("Network speed text is formatted for display", TestNetworkSpeedTextFormattingAsync);
+        await RunTestAsync("Network interface resolver picks hotspot and internet adapters", TestNetworkInterfaceResolverAsync);
+        await RunTestAsync("Throughput calculator needs two samples on the same interface", TestThroughputCalculatorAsync);
+        await RunTestAsync("Settings store throughput settings roundtrip and clamp", TestSettingsStoreThroughputRoundtripAsync);
+        await RunTestAsync("Throughput sampling service samples both targets", TestThroughputSamplingServiceAsync);
 
         if (Failures.Count == 0)
         {
@@ -623,6 +629,366 @@ public static class Program
 
         AssertTrue(threw, "A failed manual restart should propagate the exception to the caller.");
     }
+
+    private static Task TestNetworkSpeedTextFormattingAsync()
+    {
+        AssertEqual("0 B/s", NetworkSpeedFormatter.FormatRate(0), "A zero rate should render as 0 B/s.");
+        AssertEqual("0 B/s", NetworkSpeedFormatter.FormatRate(double.NaN), "Invalid rates should fall back to 0 B/s.");
+        AssertEqual("512 B/s", NetworkSpeedFormatter.FormatRate(512), "Rates below 1 KB should render in B/s.");
+        AssertEqual("2 KB/s", NetworkSpeedFormatter.FormatRate(2048), "Rates below 1 MB should render in KB/s.");
+        AssertEqual("1.5 MB/s", NetworkSpeedFormatter.FormatRate(1.5 * 1024 * 1024), "Rates below 1 GB should render in MB/s.");
+        AssertEqual("2.00 GB/s", NetworkSpeedFormatter.FormatRate(2d * 1024 * 1024 * 1024), "Large rates should render in GB/s.");
+
+        var sampledAt = new DateTimeOffset(2026, 3, 27, 0, 0, 2, TimeSpan.Zero);
+        var hotspot = NetworkThroughputReadout.Sampling(
+            NetworkTrafficTarget.Hotspot,
+            "Local Area Connection* 10",
+            new NetworkThroughput(1024 * 1024, 512 * 1024),
+            sampledAt);
+        var internet = NetworkThroughputReadout.Sampling(
+            NetworkTrafficTarget.Internet,
+            "Ethernet",
+            new NetworkThroughput(4 * 1024 * 1024, 1024 * 1024),
+            sampledAt);
+
+        AssertEqual(
+            "↓1.0 MB/s ↑512 KB/s",
+            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: true, showInternet: false),
+            "Component text should only contain the hotspot segment while the internet segment is hidden.");
+        AssertEqual(
+            "WAN ↓4.0 MB/s ↑1.0 MB/s",
+            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: false, showInternet: true),
+            "The internet segment should carry the WAN prefix.");
+        AssertEqual(
+            "↓1.0 MB/s ↑512 KB/s | WAN ↓4.0 MB/s ↑1.0 MB/s",
+            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: true, showInternet: true),
+            "Both segments should be joined when both targets are visible.");
+        AssertEqual(
+            string.Empty,
+            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: false, showInternet: false),
+            "Component text should be empty when both targets are hidden.");
+        AssertEqual(
+            string.Empty,
+            NetworkSpeedFormatter.FormatComponentText(
+                NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot),
+                internet,
+                showHotspot: true,
+                showInternet: false),
+            "A readout without sampling enabled should not render any text.");
+
+        var pending = NetworkThroughputReadout.Sampling(NetworkTrafficTarget.Hotspot, "Wi-Fi", null, sampledAt);
+        AssertEqual(
+            "↓— ↑—",
+            NetworkSpeedFormatter.FormatComponentText(pending, internet, showHotspot: true, showInternet: false),
+            "A sample without a rate yet should render placeholders instead of zero.");
+
+        AssertEqual(
+            "未启用采样",
+            NetworkSpeedFormatter.FormatStatusLine(NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot)),
+            "The status line should explain that sampling is disabled.");
+        AssertEqual(
+            "Ethernet：↓4.0 MB/s ↑1.0 MB/s",
+            NetworkSpeedFormatter.FormatStatusLine(internet),
+            "The status line should combine the interface name and both rates.");
+        AssertTrue(
+            NetworkSpeedFormatter
+                .FormatStatusLine(NetworkThroughputReadout.Unavailable(NetworkTrafficTarget.Internet, "未找到外网网卡：测试用原因。", sampledAt))
+                .Contains("未找到外网网卡", StringComparison.Ordinal),
+            "An unavailable readout should expose its failure reason.");
+        AssertEqual(
+            "Ethernet：正在采集首个采样点…",
+            NetworkSpeedFormatter.FormatStatusLine(NetworkThroughputReadout.Sampling(NetworkTrafficTarget.Internet, "Ethernet", null, sampledAt)),
+            "A pending first sample should be explained on the settings page.");
+        return Task.CompletedTask;
+    }
+
+
+    private static Task TestNetworkInterfaceResolverAsync()
+    {
+        var hotspotAdapter = CreateAdapter(
+            name: "Local Area Connection* 10",
+            description: "Microsoft Wi-Fi Direct Virtual Adapter",
+            speed: 100_000_000,
+            unicast: ["192.168.137.1"],
+            gateways: []);
+        var wifiAdapter = CreateAdapter(
+            name: "Wi-Fi",
+            description: "Intel(R) Wi-Fi 6 AX201 160MHz",
+            speed: 866_000_000,
+            unicast: ["192.168.1.20"],
+            gateways: [],
+            interfaceType: NetworkInterfaceType.Wireless80211);
+        var ethernetAdapter = CreateAdapter(
+            name: "Ethernet",
+            description: "Intel(R) Ethernet Connection",
+            speed: 1_000_000_000,
+            unicast: ["10.0.0.5"],
+            gateways: ["10.0.0.1"]);
+        var tunnelAdapter = CreateAdapter(
+            name: "VPN",
+            description: "TAP-Windows Adapter V9",
+            speed: 10_000_000,
+            unicast: ["10.8.0.2"],
+            gateways: ["10.8.0.1"],
+            interfaceType: NetworkInterfaceType.Tunnel);
+        var downAdapter = CreateAdapter(
+            name: "Ethernet 2",
+            description: "USB 网卡（未连接）",
+            speed: 100_000_000,
+            unicast: ["192.168.99.2"],
+            gateways: ["192.168.99.1"],
+            status: OperationalStatus.Down);
+
+        var adapters = new[] { wifiAdapter, ethernetAdapter, hotspotAdapter, tunnelAdapter, downAdapter };
+
+        var hotspot = RequireAdapter(
+            "The hotspot adapter should be resolved from the ICS address.",
+            NetworkInterfaceResolver.Resolve(NetworkTrafficTarget.Hotspot, adapters));
+        AssertEqual("Local Area Connection* 10", hotspot.Name, "The adapter holding a 192.168.137.x address should win.");
+
+        var internet = RequireAdapter(
+            "The internet adapter should be resolved from the default gateway.",
+            NetworkInterfaceResolver.Resolve(NetworkTrafficTarget.Internet, adapters));
+        AssertEqual("Ethernet", internet.Name, "Only the connected adapter with a gateway and without the hotspot subnet should be used.");
+
+        var wifiDirectOnly = RequireAdapter(
+            "A Wi-Fi Direct virtual adapter should be recognized even without an ICS address.",
+            NetworkInterfaceResolver.Resolve(
+                NetworkTrafficTarget.Hotspot,
+                [
+                    CreateAdapter(
+                        name: "Local Area Connection* 3",
+                        description: "Microsoft Wi-Fi Direct Virtual Adapter #2",
+                        speed: 1_000_000,
+                        unicast: ["169.254.10.1"],
+                        gateways: [],
+                        interfaceType: NetworkInterfaceType.Wireless80211)
+                ]));
+        AssertEqual("Local Area Connection* 3", wifiDirectOnly.Name, "Description-based hotspot detection should work.");
+
+        var fastestHotspot = RequireAdapter(
+            "The fastest hotspot candidate should win.",
+            NetworkInterfaceResolver.Resolve(
+                NetworkTrafficTarget.Hotspot,
+                [
+                    CreateAdapter("慢热点", string.Empty, 1_000, ["192.168.137.1"], []),
+                    CreateAdapter("快热点", string.Empty, 1_000_000, ["192.168.137.1"], [])
+                ]));
+        AssertEqual("快热点", fastestHotspot.Name, "Candidates should be ranked by interface speed.");
+
+        AssertTrue(
+            NetworkInterfaceResolver.Resolve(
+                NetworkTrafficTarget.Internet,
+                [CreateAdapter("热点本身", string.Empty, 1000, ["192.168.137.1"], ["192.168.137.1"])]) is null,
+            "The hotspot adapter must never be used as the internet adapter.");
+        AssertTrue(
+            NetworkInterfaceResolver.Resolve(
+                NetworkTrafficTarget.Internet,
+                [CreateAdapter("无网关网卡", string.Empty, 1000, ["10.0.0.9"], [])]) is null,
+            "Adapters without a gateway must not be used for internet throughput.");
+        AssertTrue(
+            NetworkInterfaceResolver.Resolve(
+                NetworkTrafficTarget.Internet,
+                [CreateAdapter("零网关网卡", string.Empty, 1000, ["10.0.0.9"], ["0.0.0.0"])]) is null,
+            "The 0.0.0.0 placeholder gateway must not count as a default gateway.");
+        AssertTrue(
+            NetworkInterfaceResolver.Resolve(NetworkTrafficTarget.Hotspot, []) is null,
+            "An empty adapter list should resolve to no adapter.");
+        AssertTrue(
+            NetworkInterfaceResolver.DescribeMissing(NetworkTrafficTarget.Hotspot).Contains("热点", StringComparison.Ordinal),
+            "The missing-hotspot reason should mention the hotspot.");
+        AssertTrue(
+            NetworkInterfaceResolver.DescribeMissing(NetworkTrafficTarget.Internet).Contains("网关", StringComparison.Ordinal),
+            "The missing-internet reason should mention the default gateway.");
+        return Task.CompletedTask;
+    }
+
+
+    private static Task TestThroughputCalculatorAsync()
+    {
+        var calculator = new HotspotThroughputCalculator();
+        var start = new DateTimeOffset(2026, 3, 27, 0, 0, 0, TimeSpan.Zero);
+
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Hotspot,
+                new NetworkInterfaceTraffic("Wi-Fi Direct", new NetworkTrafficCounters(1000, 200), start)) is null,
+            "The first sample has no baseline and must not produce a rate.");
+
+        var throughput = calculator.Calculate(
+            NetworkTrafficTarget.Hotspot,
+            new NetworkInterfaceTraffic("Wi-Fi Direct", new NetworkTrafficCounters(3048, 1224), start.AddSeconds(2)));
+        AssertTrue(throughput is not null, "The second sample on the same interface should produce a rate.");
+        AssertEqual(1024d, throughput.GetValueOrDefault().DownloadBytesPerSecond, "Download rate should be the counter delta over elapsed seconds.");
+        AssertEqual(512d, throughput.GetValueOrDefault().UploadBytesPerSecond, "Upload rate should be the counter delta over elapsed seconds.");
+
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Hotspot,
+                new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(99999, 88888), start.AddSeconds(4))) is null,
+            "Switching interfaces must drop the previous baseline instead of producing a bogus rate.");
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Hotspot,
+                new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(0, 0), start.AddSeconds(6))) is null,
+            "A counter wrap (negative delta) must not produce a rate.");
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Hotspot,
+                new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(10, 10), start.AddSeconds(6))) is null,
+            "A sample without elapsed time must not produce a rate.");
+
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Internet,
+                new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(1, 1), start)) is null,
+            "Each target keeps its own baseline.");
+        var internetRate = calculator.Calculate(
+            NetworkTrafficTarget.Internet,
+            new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(2049, 3), start.AddSeconds(1)));
+        AssertTrue(internetRate is not null, "The internet target should build its own baseline.");
+        AssertEqual(2048d, internetRate.GetValueOrDefault().DownloadBytesPerSecond, "Targets must not share baselines.");
+
+        calculator.ResetAll();
+        AssertTrue(
+            calculator.Calculate(
+                NetworkTrafficTarget.Internet,
+                new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(9999, 9999), start.AddSeconds(2))) is null,
+            "ResetAll should drop every baseline.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestSettingsStoreThroughputRoundtripAsync()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(root, "settings.json");
+            var first = new HotspotPluginSettingsStore(path);
+            AssertTrue(first.Throughput.EnableSampling, "Throughput sampling should be enabled by default.");
+            AssertEqual(2, first.Throughput.SamplingIntervalSeconds, "The default sampling interval should be 2 seconds.");
+
+            first.UpdateThroughput(settings =>
+            {
+                settings.EnableSampling = false;
+                settings.SamplingIntervalSeconds = 99;
+            });
+            AssertFalse(first.Throughput.EnableSampling, "The sampling flag should be updated.");
+            AssertEqual(10, first.Throughput.SamplingIntervalSeconds, "Out-of-range intervals should be clamped to the allowed maximum.");
+
+            var second = new HotspotPluginSettingsStore(path);
+            AssertFalse(second.Throughput.EnableSampling, "The sampling flag should roundtrip through the settings file.");
+            AssertEqual(10, second.Throughput.SamplingIntervalSeconds, "The sampling interval should roundtrip through the settings file.");
+
+            second.UpdateThroughput(settings => settings.SamplingIntervalSeconds = 0);
+            AssertEqual(1, second.Throughput.SamplingIntervalSeconds, "Intervals below the minimum should be clamped.");
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+
+    private static Task TestThroughputSamplingServiceAsync()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var settingsStore = new HotspotPluginSettingsStore(Path.Combine(root, "settings.json"));
+            var runtimeState = new HotspotGuardRuntimeState();
+            var timeProvider = new ManualTimeProvider(new DateTimeOffset(2026, 3, 27, 0, 0, 0, TimeSpan.Zero));
+            var reader = new FakeNetworkTrafficReader();
+            reader.Results[NetworkTrafficTarget.Hotspot] = NetworkTrafficReadResult.Success(
+                NetworkTrafficTarget.Hotspot,
+                "Local Area Connection* 10",
+                new NetworkTrafficCounters(1024, 512),
+                timeProvider.GetUtcNow());
+            reader.Results[NetworkTrafficTarget.Internet] =
+                NetworkTrafficReadResult.Failure(NetworkTrafficTarget.Internet, "未找到外网网卡：测试用原因。");
+            var service = new HotspotThroughputBackgroundService(
+                settingsStore,
+                runtimeState,
+                reader,
+                new HotspotThroughputCalculator(),
+                timeProvider);
+
+            service.SampleOnce();
+
+            AssertEqual(2, reader.ReadTargets.Count, "One pass should sample both the hotspot and the internet adapter.");
+            AssertEqual("Local Area Connection* 10", runtimeState.HotspotThroughput.InterfaceName, "The hotspot readout should expose the resolved interface.");
+            AssertTrue(runtimeState.HotspotThroughput.Throughput is null, "The first sample should not report a rate yet.");
+            AssertTrue(runtimeState.HotspotThroughput.IsSampling, "The hotspot readout should be marked as sampling.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.HotspotThroughput.Error), "A successful read should not record an error.");
+            AssertEqual("未找到外网网卡：测试用原因。", runtimeState.InternetThroughput.Error, "Read failures should be surfaced as an error readout.");
+            AssertTrue(runtimeState.InternetThroughput.Throughput is null, "A failed read should not report a rate.");
+            AssertTrue(
+                runtimeState.LastThroughputSampleAt == timeProvider.GetUtcNow(),
+                "The sample time should be recorded on the runtime state.");
+
+            timeProvider.Advance(TimeSpan.FromSeconds(2));
+            reader.Results[NetworkTrafficTarget.Hotspot] = NetworkTrafficReadResult.Success(
+                NetworkTrafficTarget.Hotspot,
+                "Local Area Connection* 10",
+                new NetworkTrafficCounters(1024 + 4096, 512 + 2048),
+                timeProvider.GetUtcNow());
+            service.SampleOnce();
+
+            var hotspotThroughput = runtimeState.HotspotThroughput.Throughput;
+            AssertTrue(hotspotThroughput is not null, "The second sample should produce a rate.");
+            AssertEqual(2048d, hotspotThroughput.GetValueOrDefault().DownloadBytesPerSecond, "The download rate should come from the counter delta.");
+            AssertEqual(1024d, hotspotThroughput.GetValueOrDefault().UploadBytesPerSecond, "The upload rate should come from the counter delta.");
+
+            settingsStore.UpdateThroughput(settings => settings.EnableSampling = false);
+            reader.ReadTargets.Clear();
+            service.SampleOnce();
+
+            AssertEqual(0, reader.ReadTargets.Count, "Disabled sampling should not touch the network at all.");
+            AssertFalse(runtimeState.HotspotThroughput.IsSampling, "Disabled sampling should mark the hotspot readout as not sampling.");
+            AssertFalse(runtimeState.InternetThroughput.IsSampling, "Disabled sampling should mark the internet readout as not sampling.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.HotspotThroughput.Error), "Disabled sampling should not leave an error behind.");
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static NetworkAdapterInfo RequireAdapter(string message, NetworkAdapterInfo? adapter)
+    {
+        AssertTrue(adapter is not null, message);
+        return adapter.GetValueOrDefault();
+    }
+
+    private static NetworkAdapterInfo CreateAdapter(
+        string name,
+        string description,
+        long speed,
+        string[] unicast,
+        string[] gateways,
+        NetworkInterfaceType interfaceType = NetworkInterfaceType.Ethernet,
+        OperationalStatus status = OperationalStatus.Up)
+    {
+        return new NetworkAdapterInfo(name, description, interfaceType, status, speed, false, unicast, gateways);
+    }
+
+    private sealed class FakeNetworkTrafficReader : INetworkTrafficReader
+    {
+        public Dictionary<NetworkTrafficTarget, NetworkTrafficReadResult> Results { get; } = [];
+
+        public List<NetworkTrafficTarget> ReadTargets { get; } = [];
+
+        public NetworkTrafficReadResult Read(NetworkTrafficTarget target)
+        {
+            ReadTargets.Add(target);
+            return Results.TryGetValue(target, out var result)
+                ? result
+                : NetworkTrafficReadResult.Failure(target, "未配置的采样目标。");
+        }
+    }
+
 
     private static TestContext CreateContext(HotspotActualState controllerState, bool autoStartGuard, GuardTargetState startupTarget)
     {
