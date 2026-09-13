@@ -11,4 +11,11 @@
         <ProjectReference Include="..\HotspotService\HotspotService.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- 插件工程以 ExcludeAssets=runtime 引用 PluginSdk（宿主提供这些程序集），
+             自测程序直接实例化后台服务需要运行时的这份程序集，故显式引用；版本需跟随
+             ClassIsland.Core 传递要求（net10 为 10.0.10），低于它会被 NU1605 判定降级 -->
+        <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+    </ItemGroup>
+
 </Project>

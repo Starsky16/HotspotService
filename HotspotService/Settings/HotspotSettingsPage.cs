@@ -29,6 +29,11 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private readonly Button _disableGuardButton;
     private readonly Button _restartButton;
     private readonly NumericUpDown _clientRefreshIntervalBox;
+    private readonly CheckBox _enableThroughputCheckBox;
+    private readonly NumericUpDown _throughputIntervalBox;
+    private readonly TextBlock _hotspotThroughputValue;
+    private readonly TextBlock _internetThroughputValue;
+    private readonly TextBlock _throughputSampledAtValue;
     private readonly TextBlock _restartTipText = new();
     private int _restartTipVersion;
     private readonly TextBlock _guardEnabledValue;
@@ -233,6 +238,13 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         });
         mainPanel.Children.Add(refreshPanel);
 
+        mainPanel.Children.Add(CreateThroughputPanel(
+            out _enableThroughputCheckBox,
+            out _throughputIntervalBox,
+            out _hotspotThroughputValue,
+            out _internetThroughputValue,
+            out _throughputSampledAtValue));
+
         var statusBorder = new Border
         {
             BorderBrush = Brushes.Gray,
@@ -342,11 +354,101 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             _hotspotStateValue.Text = _runtimeState.LastKnownHotspotState.ToDisplayText();
             _lastCheckValue.Text = _runtimeState.LastCheckAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未检查";
             _lastErrorValue.Text = string.IsNullOrWhiteSpace(_runtimeState.LastError) ? "无" : _runtimeState.LastError;
+
+            _enableThroughputCheckBox.IsChecked = _settingsStore.Throughput.EnableSampling;
+            _throughputIntervalBox.Value = HotspotThroughputSettings.ClampInterval(_settingsStore.Throughput.SamplingIntervalSeconds);
+            _hotspotThroughputValue.Text = NetworkSpeedFormatter.FormatStatusLine(_runtimeState.HotspotThroughput);
+            _internetThroughputValue.Text = NetworkSpeedFormatter.FormatStatusLine(_runtimeState.InternetThroughput);
+            _throughputSampledAtValue.Text =
+                _runtimeState.LastThroughputSampleAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未采样";
         }
         finally
         {
             _updatingUi = false;
         }
+    }
+
+    private StackPanel CreateThroughputPanel(
+        out CheckBox enableCheckBox,
+        out NumericUpDown intervalBox,
+        out TextBlock hotspotValue,
+        out TextBlock internetValue,
+        out TextBlock sampledAtValue)
+    {
+        var panel = new StackPanel
+        {
+            Spacing = 8
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "网速检测"
+        });
+
+        // out 参数不能进 lambda，先用局部变量接线，最后再赋给 out 参数。
+        var enableBox = new CheckBox
+        {
+            Content = "启用网卡吞吐采样（热点网卡 + 外网网卡）"
+        };
+        enableBox.IsCheckedChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            _settingsStore.UpdateThroughput(settings => settings.EnableSampling = enableBox.IsChecked == true);
+        };
+        panel.Children.Add(enableBox);
+        enableCheckBox = enableBox;
+
+        var intervalRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        intervalRow.Children.Add(new TextBlock
+        {
+            Text = "采样间隔（秒）",
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        var intervalInput = new NumericUpDown
+        {
+            Minimum = HotspotThroughputSettings.MinimumIntervalSeconds,
+            Maximum = HotspotThroughputSettings.MaximumIntervalSeconds,
+            Increment = 1,
+            Value = HotspotThroughputSettings.ClampInterval(_settingsStore.Throughput.SamplingIntervalSeconds),
+            MinWidth = 120
+        };
+        intervalInput.ValueChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            if (intervalInput.Value is { } value)
+            {
+                _settingsStore.UpdateThroughput(settings => settings.SamplingIntervalSeconds = (int)value);
+            }
+        };
+        intervalRow.Children.Add(intervalInput);
+        panel.Children.Add(intervalRow);
+        intervalBox = intervalInput;
+
+        panel.Children.Add(CreateStatusRow("热点网卡", out hotspotValue, wrapValue: true));
+        panel.Children.Add(CreateStatusRow("外网网卡", out internetValue, wrapValue: true));
+        panel.Children.Add(CreateStatusRow("最近采样", out sampledAtValue));
+        panel.Children.Add(new TextBlock
+        {
+            Text = "网速由网卡累计流量差值换算，单位为字节每秒（B/s、KB/s、MB/s）；热点网卡优先按 192.168.137.x 地址识别，"
+                   + "其次按 Wi-Fi Direct 虚拟适配器识别，因此通常需要在热点开启后才能看到数据。"
+                   + "是否在展示组件中显示网速，请到“移动热点守护”组件设置中单独开关。",
+            FontSize = 12,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+        return panel;
     }
 
     private static Grid CreateStatusRow(string label, out TextBlock valueBlock, bool wrapValue = false)

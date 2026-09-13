@@ -20,7 +20,7 @@ namespace HotspotService.Components;
     PluginIds.HotspotStatusComponent,
     "移动热点守护",
     PluginIds.WifiGlyph,
-    "以圆点与文字展示守护状态与连接设备数（不支持时显示 None，关闭时显示 Off）。")]
+    "以圆点与文字展示守护状态与连接设备数（不支持时显示 None，关闭时显示 Off），并可显示热点/外网网速。")]
 public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponentSettings>
 {
     private static readonly Color EnabledDotColor = Color.FromRgb(0x66, 0xBB, 0x6A);
@@ -29,6 +29,7 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
     private readonly HotspotGuardRuntimeState _runtimeState;
     private readonly TextBlock _statusDotText = new();
     private readonly TextBlock _clientCountText = new();
+    private readonly TextBlock _throughputText = new();
     private HotspotStatusComponentSettings? _subscribedSettings;
 
     public HotspotStatusComponent(HotspotGuardRuntimeState runtimeState)
@@ -43,8 +44,10 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
         };
         _statusDotText.VerticalAlignment = VerticalAlignment.Center;
         _clientCountText.VerticalAlignment = VerticalAlignment.Center;
+        _throughputText.VerticalAlignment = VerticalAlignment.Center;
         panel.Children.Add(_statusDotText);
         panel.Children.Add(_clientCountText);
+        panel.Children.Add(_throughputText);
         Content = panel;
 
         _runtimeState.PropertyChanged += OnRuntimeStatePropertyChanged;
@@ -122,6 +125,15 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
             _runtimeState.TetheringSupport == HotspotSupportState.NotSupported ? "None"
             : _runtimeState.LastKnownHotspotState == HotspotActualState.Off ? "Off"
             : _runtimeState.ConnectedClientCount.ToString();
+
+        // 网速文本：热点网卡显示 “↓下行 ↑上行”，外网网卡额外带 WAN 前缀；两个目标都不可见时整块隐藏。
+        var throughputText = NetworkSpeedFormatter.FormatComponentText(
+            _runtimeState.HotspotThroughput,
+            _runtimeState.InternetThroughput,
+            settings?.ShowHotspotThroughput ?? true,
+            settings?.ShowInternetThroughput ?? false);
+        _throughputText.Text = throughputText;
+        _throughputText.IsVisible = throughputText.Length > 0;
     }
 }
 

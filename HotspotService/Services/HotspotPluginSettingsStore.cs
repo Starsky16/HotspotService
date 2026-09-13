@@ -19,6 +19,7 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     private GuardTargetState _startupTarget = GuardTargetState.On;
     private HotspotRestartPolicySettings _restartPolicy = new();
     private int _clientCountRefreshSeconds = 10;
+    private HotspotThroughputSettings _throughput = new();
 
     public HotspotPluginSettingsStore(string settingsFilePath)
     {
@@ -75,6 +76,35 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 网速采样设置。
+    /// </summary>
+    public HotspotThroughputSettings Throughput
+    {
+        get => _throughput;
+        set
+        {
+            if (SetProperty(ref _throughput, value))
+            {
+                Save();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 修改网速采样设置。嵌套对象内部的修改不会被属性 setter 捕获，
+    /// 因此这里统一做区间规整、通知界面刷新并立即持久化。
+    /// </summary>
+    public void UpdateThroughput(Action<HotspotThroughputSettings> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        update(_throughput);
+        _throughput.SamplingIntervalSeconds = HotspotThroughputSettings.ClampInterval(_throughput.SamplingIntervalSeconds);
+        OnPropertyChanged(nameof(Throughput));
+        Save();
+    }
+
     private void Load()
     {
         if (!File.Exists(_settingsFilePath))
@@ -94,6 +124,8 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 _startupTarget = document.StartupTarget;
                 _restartPolicy = document.RestartPolicy ?? new HotspotRestartPolicySettings();
                 _clientCountRefreshSeconds = Math.Max(1, document.ClientCountRefreshSeconds);
+                _throughput = document.Throughput ?? new HotspotThroughputSettings();
+                _throughput.SamplingIntervalSeconds = HotspotThroughputSettings.ClampInterval(_throughput.SamplingIntervalSeconds);
                 return;
             }
 
@@ -152,7 +184,8 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 AutoStartGuard = _autoStartGuard,
                 StartupTarget = _startupTarget,
                 RestartPolicy = _restartPolicy,
-                ClientCountRefreshSeconds = _clientCountRefreshSeconds
+                ClientCountRefreshSeconds = _clientCountRefreshSeconds,
+                Throughput = _throughput
             };
             var json = JsonSerializer.Serialize(document, JsonOptions);
 
