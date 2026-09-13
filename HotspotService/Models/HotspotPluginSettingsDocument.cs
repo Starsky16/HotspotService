@@ -12,4 +12,9 @@ public sealed class HotspotPluginSettingsDocument
     /// 连接设备信息（数量/上限/设备列表）的刷新间隔（秒）。
     /// </summary>
     public int ClientCountRefreshSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// 网速采样设置（热点网卡与外网网卡吞吐）。
+    /// </summary>
+    public HotspotThroughputSettings Throughput { get; set; } = new();
 }

@@ -14,6 +14,9 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private IReadOnlyList<HotspotClientInfo> _connectedClients = [];
     private DateTimeOffset? _lastCheckAt;
     private string? _lastError;
+    private NetworkThroughputReadout _hotspotThroughput = NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot);
+    private NetworkThroughputReadout _internetThroughput = NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Internet);
+    private DateTimeOffset? _lastThroughputSampleAt;
 
     public bool GuardEnabled
     {
@@ -70,6 +73,33 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _lastError;
         private set => SetProperty(ref _lastError, value);
+    }
+
+    /// <summary>
+    /// 热点网卡的最新网速读数。采样关闭时为未采样形态，找不到热点网卡时为失败形态。
+    /// </summary>
+    public NetworkThroughputReadout HotspotThroughput
+    {
+        get => _hotspotThroughput;
+        private set => SetProperty(ref _hotspotThroughput, value);
+    }
+
+    /// <summary>
+    /// 外网网卡的最新网速读数。
+    /// </summary>
+    public NetworkThroughputReadout InternetThroughput
+    {
+        get => _internetThroughput;
+        private set => SetProperty(ref _internetThroughput, value);
+    }
+
+    /// <summary>
+    /// 最近一次网速采样时间（只要有一个目标完成采样就会更新）。
+    /// </summary>
+    public DateTimeOffset? LastThroughputSampleAt
+    {
+        get => _lastThroughputSampleAt;
+        private set => SetProperty(ref _lastThroughputSampleAt, value);
     }
 
     public bool SetGuardEnabled(bool value)
@@ -135,5 +165,46 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     public void SetLastError(string? value)
     {
         LastError = value;
+    }
+
+    /// <summary>
+    /// 按读数里的目标写入对应网速字段，并同步记录采样时间；返回读数是否发生变化。
+    /// </summary>
+    public bool SetThroughput(NetworkThroughputReadout value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var changed = value.Target switch
+        {
+            NetworkTrafficTarget.Hotspot => SetHotspotThroughput(value),
+            NetworkTrafficTarget.Internet => SetInternetThroughput(value),
+            _ => false
+        };
+
+        if (value.SampledAt is { } sampledAt)
+        {
+            SetLastThroughputSampleAt(sampledAt);
+        }
+
+        return changed;
+    }
+
+    public bool SetHotspotThroughput(NetworkThroughputReadout value)
+    {
+        var changed = HotspotThroughput != value;
+        HotspotThroughput = value;
+        return changed;
+    }
+
+    public bool SetInternetThroughput(NetworkThroughputReadout value)
+    {
+        var changed = InternetThroughput != value;
+        InternetThroughput = value;
+        return changed;
+    }
+
+    public void SetLastThroughputSampleAt(DateTimeOffset? value)
+    {
+        LastThroughputSampleAt = value;
     }
 }

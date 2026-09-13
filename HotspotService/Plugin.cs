@@ -28,7 +28,10 @@ public class Plugin : PluginBase
         services.AddSingleton<IGuardStatusNotifier, ClassIslandRulesetNotifier>();
         services.AddSingleton<IHotspotController, WinRtHotspotController>();
         services.AddSingleton<HotspotGuardCoordinator>();
+        services.AddSingleton<INetworkTrafficReader, NetworkInterfaceTrafficReader>();
+        services.AddSingleton<HotspotThroughputCalculator>();
         services.AddHostedService<HotspotGuardBackgroundService>();
+        services.AddHostedService<HotspotThroughputBackgroundService>();
 
         services.AddSettingsPage<HotspotSettingsPage>();
         services.AddAction<EnableGuardAction>();

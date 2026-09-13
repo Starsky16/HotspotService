@@ -19,6 +19,14 @@ public sealed class HotspotStatusComponentSettingsControl : ComponentBase<Hotspo
     {
         Content = "显示设备数量（不支持时显示 None，关闭时显示 Off）"
     };
+    private readonly CheckBox _showHotspotThroughputCheckBox = new()
+    {
+        Content = "显示热点网速（↓下行 ↑上行，需先在插件设置页启用网速采样）"
+    };
+    private readonly CheckBox _showInternetThroughputCheckBox = new()
+    {
+        Content = "显示外网(WAN)网速"
+    };
     private bool _updatingUi;
 
     public HotspotStatusComponentSettingsControl()
@@ -55,6 +63,28 @@ public sealed class HotspotStatusComponentSettingsControl : ComponentBase<Hotspo
         };
         panel.Children.Add(_showClientCountCheckBox);
 
+        _showHotspotThroughputCheckBox.IsCheckedChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            Settings.ShowHotspotThroughput = _showHotspotThroughputCheckBox.IsChecked == true;
+        };
+        panel.Children.Add(_showHotspotThroughputCheckBox);
+
+        _showInternetThroughputCheckBox.IsCheckedChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            Settings.ShowInternetThroughput = _showInternetThroughputCheckBox.IsChecked == true;
+        };
+        panel.Children.Add(_showInternetThroughputCheckBox);
+
         Content = panel;
     }
 
@@ -71,6 +101,8 @@ public sealed class HotspotStatusComponentSettingsControl : ComponentBase<Hotspo
         {
             _showStatusDotCheckBox.IsChecked = Settings.ShowStatusDot;
             _showClientCountCheckBox.IsChecked = Settings.ShowClientCount;
+            _showHotspotThroughputCheckBox.IsChecked = Settings.ShowHotspotThroughput;
+            _showInternetThroughputCheckBox.IsChecked = Settings.ShowInternetThroughput;
         }
         finally
         {
