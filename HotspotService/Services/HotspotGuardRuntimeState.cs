@@ -17,6 +17,10 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private NetworkThroughputReadout _hotspotThroughput = NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot);
     private NetworkThroughputReadout _internetThroughput = NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Internet);
     private DateTimeOffset? _lastThroughputSampleAt;
+    private bool _shortcutSourceAvailable;
+    private string? _shortcutSourceMessage;
+    private DateTimeOffset? _lastShortcutTriggeredAt;
+    private string? _lastShortcutError;
 
     public bool GuardEnabled
     {
@@ -100,6 +104,42 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _lastThroughputSampleAt;
         private set => SetProperty(ref _lastThroughputSampleAt, value);
+    }
+
+    /// <summary>
+    /// 是否已连接到 KeyboardCapture 插件（快捷键重启热点可用）。
+    /// </summary>
+    public bool ShortcutSourceAvailable
+    {
+        get => _shortcutSourceAvailable;
+        private set => SetProperty(ref _shortcutSourceAvailable, value);
+    }
+
+    /// <summary>
+    /// 快捷键来源的提示信息：未检测到 KeyboardCapture 或连接失败时的原因，连接正常时为 null。
+    /// </summary>
+    public string? ShortcutSourceMessage
+    {
+        get => _shortcutSourceMessage;
+        private set => SetProperty(ref _shortcutSourceMessage, value);
+    }
+
+    /// <summary>
+    /// 最近一次快捷键触发热点重启的时间。
+    /// </summary>
+    public DateTimeOffset? LastShortcutTriggeredAt
+    {
+        get => _lastShortcutTriggeredAt;
+        private set => SetProperty(ref _lastShortcutTriggeredAt, value);
+    }
+
+    /// <summary>
+    /// 最近一次快捷键重启失败的原因，成功时为 null。
+    /// </summary>
+    public string? LastShortcutError
+    {
+        get => _lastShortcutError;
+        private set => SetProperty(ref _lastShortcutError, value);
     }
 
     public bool SetGuardEnabled(bool value)
@@ -206,5 +246,25 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     public void SetLastThroughputSampleAt(DateTimeOffset? value)
     {
         LastThroughputSampleAt = value;
+    }
+
+    public void SetShortcutSourceAvailable(bool value)
+    {
+        ShortcutSourceAvailable = value;
+    }
+
+    public void SetShortcutSourceMessage(string? value)
+    {
+        ShortcutSourceMessage = value;
+    }
+
+    public void SetLastShortcutTriggeredAt(DateTimeOffset? value)
+    {
+        LastShortcutTriggeredAt = value;
+    }
+
+    public void SetLastShortcutError(string? value)
+    {
+        LastShortcutError = value;
     }
 }

@@ -16,6 +16,10 @@
         </PackageReference>
         <!-- 显式引用以保证发布产物自包含 System.Text.Json，避免依赖宿主版本 -->
         <PackageReference Include="System.Text.Json" Version="9.0.2" />
+        <!-- KeyboardCapture 的共享接口包：用于订阅全局按键实现快捷键重启热点。
+             插件在 manifest 中把 Starsky16.KeyboardCapture 声明为可选依赖，
+             因此该程序集需要随插件一起发布（不能 ExcludeAssets=runtime）。 -->
+        <PackageReference Include="Starsky16.KeyboardCapture.Abstractions" Version="0.1.0" />
     </ItemGroup>
 
     <ItemGroup>

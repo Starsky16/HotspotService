@@ -14,6 +14,11 @@ author: AlanCRL
 supportedOSPlatforms:
   - Windows
 
+# KeyboardCapture 为可选依赖：未安装时插件照常工作，只是没有快捷键功能
+dependencies:
+  - id: Starsky16.KeyboardCapture
+    isRequired: false
+
 repoOwner: Alan-CRL
 repoName: HotspotService
 assetsRoot: main/HotspotService

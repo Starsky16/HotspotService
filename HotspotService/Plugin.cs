@@ -30,8 +30,11 @@ public class Plugin : PluginBase
         services.AddSingleton<HotspotGuardCoordinator>();
         services.AddSingleton<INetworkTrafficReader, NetworkInterfaceTrafficReader>();
         services.AddSingleton<HotspotThroughputCalculator>();
+        services.AddSingleton<IHotspotHotkeySource, KeyboardCaptureHotkeySource>();
+        services.AddSingleton<HotspotShortcutMatcher>();
         services.AddHostedService<HotspotGuardBackgroundService>();
         services.AddHostedService<HotspotThroughputBackgroundService>();
+        services.AddHostedService<HotspotShortcutHostedService>();
 
         services.AddSettingsPage<HotspotSettingsPage>();
         services.AddAction<EnableGuardAction>();
