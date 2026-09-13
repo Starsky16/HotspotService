@@ -17,4 +17,9 @@ public sealed class HotspotPluginSettingsDocument
     /// 网速采样设置（热点网卡与外网网卡吞吐）。
     /// </summary>
     public HotspotThroughputSettings Throughput { get; set; } = new();
+
+    /// <summary>
+    /// 快捷键重启热点设置（通过 KeyboardCapture 插件订阅全局按键）。
+    /// </summary>
+    public HotspotShortcutSettings Shortcut { get; set; } = new();
 }
