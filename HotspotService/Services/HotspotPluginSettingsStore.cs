@@ -20,6 +20,7 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     private HotspotRestartPolicySettings _restartPolicy = new();
     private int _clientCountRefreshSeconds = 10;
     private HotspotThroughputSettings _throughput = new();
+    private HotspotShortcutSettings _shortcut = new();
 
     public HotspotPluginSettingsStore(string settingsFilePath)
     {
@@ -105,6 +106,40 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
         Save();
     }
 
+    /// <summary>
+    /// 快捷键重启热点设置。
+    /// </summary>
+    public HotspotShortcutSettings Shortcut
+    {
+        get => _shortcut;
+        set
+        {
+            if (SetProperty(ref _shortcut, value))
+            {
+                Save();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 修改快捷键设置。嵌套对象内部的修改不会被属性 setter 捕获，
+    /// 因此这里统一规整区间、通知界面刷新并立即持久化。
+    /// </summary>
+    public void UpdateShortcut(Action<HotspotShortcutSettings> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        update(_shortcut);
+        _shortcut.CooldownSeconds = HotspotShortcutSettings.ClampCooldown(_shortcut.CooldownSeconds);
+        if (!HotspotShortcutKeys.Contains(_shortcut.KeyName))
+        {
+            _shortcut.KeyName = "F9";
+        }
+
+        OnPropertyChanged(nameof(Shortcut));
+        Save();
+    }
+
     private void Load()
     {
         if (!File.Exists(_settingsFilePath))
@@ -126,6 +161,13 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 _clientCountRefreshSeconds = Math.Max(1, document.ClientCountRefreshSeconds);
                 _throughput = document.Throughput ?? new HotspotThroughputSettings();
                 _throughput.SamplingIntervalSeconds = HotspotThroughputSettings.ClampInterval(_throughput.SamplingIntervalSeconds);
+                _shortcut = document.Shortcut ?? new HotspotShortcutSettings();
+                _shortcut.CooldownSeconds = HotspotShortcutSettings.ClampCooldown(_shortcut.CooldownSeconds);
+                if (!HotspotShortcutKeys.Contains(_shortcut.KeyName))
+                {
+                    _shortcut.KeyName = "F9";
+                }
+
                 return;
             }
 
@@ -185,7 +227,8 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 StartupTarget = _startupTarget,
                 RestartPolicy = _restartPolicy,
                 ClientCountRefreshSeconds = _clientCountRefreshSeconds,
-                Throughput = _throughput
+                Throughput = _throughput,
+                Shortcut = _shortcut
             };
             var json = JsonSerializer.Serialize(document, JsonOptions);
 

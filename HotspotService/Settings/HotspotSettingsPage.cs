@@ -34,6 +34,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private readonly TextBlock _hotspotThroughputValue;
     private readonly TextBlock _internetThroughputValue;
     private readonly TextBlock _throughputSampledAtValue;
+    private readonly ShortcutControls _shortcut;
     private readonly TextBlock _restartTipText = new();
     private int _restartTipVersion;
     private readonly TextBlock _guardEnabledValue;
@@ -246,6 +247,9 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             out _internetThroughputValue,
             out _throughputSampledAtValue));
 
+        _shortcut = CreateShortcutPanel();
+        mainPanel.Children.Add(_shortcut.Panel);
+
         var statusBorder = new Border
         {
             BorderBrush = Brushes.Gray,
@@ -362,6 +366,25 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             _internetThroughputValue.Text = NetworkSpeedFormatter.FormatStatusLine(_runtimeState.InternetThroughput);
             _throughputSampledAtValue.Text =
                 _runtimeState.LastThroughputSampleAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未采样";
+
+            var shortcut = _settingsStore.Shortcut;
+            _shortcut.EnableCheckBox.IsChecked = shortcut.Enabled;
+            _shortcut.KeyComboBox.SelectedItem = HotspotShortcutKeys.All
+                .FirstOrDefault(x => string.Equals(x, shortcut.KeyName, StringComparison.OrdinalIgnoreCase));
+            _shortcut.CtrlCheckBox.IsChecked = shortcut.Ctrl;
+            _shortcut.AltCheckBox.IsChecked = shortcut.Alt;
+            _shortcut.ShiftCheckBox.IsChecked = shortcut.Shift;
+            _shortcut.MetaCheckBox.IsChecked = shortcut.Meta;
+            _shortcut.CooldownBox.Value = HotspotShortcutSettings.ClampCooldown(shortcut.CooldownSeconds);
+
+            _shortcut.CombinationValue.Text = shortcut.DescribeShortcut();
+            _shortcut.SourceValue.Text = _runtimeState.ShortcutSourceAvailable
+                ? "已连接，快捷键可用"
+                : _runtimeState.ShortcutSourceMessage ?? "未检测到 KeyboardCapture 插件";
+            _shortcut.TriggeredAtValue.Text =
+                _runtimeState.LastShortcutTriggeredAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未触发";
+            _shortcut.ErrorValue.Text =
+                string.IsNullOrWhiteSpace(_runtimeState.LastShortcutError) ? "无" : _runtimeState.LastShortcutError;
         }
         finally
         {
@@ -451,6 +474,178 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         });
         return panel;
     }
+
+    private ShortcutControls CreateShortcutPanel()
+    {
+        var panel = new StackPanel
+        {
+            Spacing = 8
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "快捷键重启热点"
+        });
+
+        var enableCheckBox = new CheckBox
+        {
+            Content = "启用快捷键（需要安装 KeyboardCapture 插件）"
+        };
+        enableCheckBox.IsCheckedChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            _settingsStore.UpdateShortcut(settings => settings.Enabled = enableCheckBox.IsChecked == true);
+        };
+        panel.Children.Add(enableCheckBox);
+
+        var keyRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        keyRow.Children.Add(new TextBlock
+        {
+            Text = "触发键",
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        var keyComboBox = new ComboBox
+        {
+            ItemsSource = HotspotShortcutKeys.All,
+            MinWidth = 120
+        };
+        keyComboBox.SelectionChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            if (keyComboBox.SelectedItem is string keyName)
+            {
+                _settingsStore.UpdateShortcut(settings => settings.KeyName = keyName);
+            }
+        };
+        keyRow.Children.Add(keyComboBox);
+        panel.Children.Add(keyRow);
+
+        var modifierRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        modifierRow.Children.Add(new TextBlock
+        {
+            Text = "修饰键",
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        CheckBox CreateModifierCheckBox(string text, Action<HotspotShortcutSettings, bool> apply)
+        {
+            var checkBox = new CheckBox
+            {
+                Content = text
+            };
+            checkBox.IsCheckedChanged += (_, _) =>
+            {
+                if (_updatingUi)
+                {
+                    return;
+                }
+
+                var value = checkBox.IsChecked == true;
+                _settingsStore.UpdateShortcut(settings => apply(settings, value));
+            };
+            modifierRow.Children.Add(checkBox);
+            return checkBox;
+        }
+
+        var ctrlCheckBox = CreateModifierCheckBox("Ctrl", static (settings, value) => settings.Ctrl = value);
+        var altCheckBox = CreateModifierCheckBox("Alt", static (settings, value) => settings.Alt = value);
+        var shiftCheckBox = CreateModifierCheckBox("Shift", static (settings, value) => settings.Shift = value);
+        var metaCheckBox = CreateModifierCheckBox("Win", static (settings, value) => settings.Meta = value);
+        panel.Children.Add(modifierRow);
+
+        var cooldownRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        cooldownRow.Children.Add(new TextBlock
+        {
+            Text = "触发冷却（秒）",
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        var cooldownBox = new NumericUpDown
+        {
+            Minimum = HotspotShortcutSettings.MinimumCooldownSeconds,
+            Maximum = HotspotShortcutSettings.MaximumCooldownSeconds,
+            Increment = 1,
+            Value = HotspotShortcutSettings.ClampCooldown(_settingsStore.Shortcut.CooldownSeconds),
+            MinWidth = 120
+        };
+        cooldownBox.ValueChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            if (cooldownBox.Value is { } value)
+            {
+                _settingsStore.UpdateShortcut(settings => settings.CooldownSeconds = (int)value);
+            }
+        };
+        cooldownRow.Children.Add(cooldownBox);
+        panel.Children.Add(cooldownRow);
+
+        panel.Children.Add(CreateStatusRow("当前组合", out var combinationValue));
+        panel.Children.Add(CreateStatusRow("KeyboardCapture", out var sourceValue, wrapValue: true));
+        panel.Children.Add(CreateStatusRow("最近触发", out var triggeredAtValue));
+        panel.Children.Add(CreateStatusRow("最近错误", out var errorValue, wrapValue: true));
+        panel.Children.Add(new TextBlock
+        {
+            Text = "快捷键由 KeyboardCapture 插件提供（使用非独占钩子，不会拦截系统热键）。"
+                   + "未安装该插件时快捷键不可用，其余功能不受影响；组合与冷却修改后立即生效。",
+            FontSize = 12,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        return new ShortcutControls(
+            panel,
+            enableCheckBox,
+            keyComboBox,
+            ctrlCheckBox,
+            altCheckBox,
+            shiftCheckBox,
+            metaCheckBox,
+            cooldownBox,
+            combinationValue,
+            sourceValue,
+            triggeredAtValue,
+            errorValue);
+    }
+
+    /// <summary>快捷键分组里的控件集合，避免设置页构造函数里出现大量 out 参数。</summary>
+    private sealed record ShortcutControls(
+        StackPanel Panel,
+        CheckBox EnableCheckBox,
+        ComboBox KeyComboBox,
+        CheckBox CtrlCheckBox,
+        CheckBox AltCheckBox,
+        CheckBox ShiftCheckBox,
+        CheckBox MetaCheckBox,
+        NumericUpDown CooldownBox,
+        TextBlock CombinationValue,
+        TextBlock SourceValue,
+        TextBlock TriggeredAtValue,
+        TextBlock ErrorValue);
 
     private static Grid CreateStatusRow(string label, out TextBlock valueBlock, bool wrapValue = false)
     {

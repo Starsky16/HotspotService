@@ -52,6 +52,10 @@ public static class Program
         await RunTestAsync("Throughput calculator needs two samples on the same interface", TestThroughputCalculatorAsync);
         await RunTestAsync("Settings store throughput settings roundtrip and clamp", TestSettingsStoreThroughputRoundtripAsync);
         await RunTestAsync("Throughput sampling service samples both targets", TestThroughputSamplingServiceAsync);
+        await RunTestAsync("Shortcut matcher requires the exact key and modifiers", TestShortcutMatcherAsync);
+        await RunTestAsync("Settings store shortcut settings roundtrip and clamp", TestSettingsStoreShortcutRoundtripAsync);
+        await RunTestAsync("Keyboard shortcut triggers a hotspot restart", TestShortcutRestartAsync);
+        await RunTestAsync("Optional keyboard source stays safe without a host", TestKeyboardCaptureSourceWithoutHostAsync);
 
         if (Failures.Count == 0)
         {
@@ -759,6 +763,221 @@ public static class Program
         AssertTrue(threw, "A failed manual restart should propagate the exception to the caller.");
     }
 
+    private static Task TestShortcutMatcherAsync()
+    {
+        var timeProvider = new ManualTimeProvider(new DateTimeOffset(2026, 3, 27, 0, 0, 0, TimeSpan.Zero));
+        var matcher = new HotspotShortcutMatcher(timeProvider);
+        var settings = new HotspotShortcutSettings
+        {
+            Enabled = true,
+            KeyName = "F9",
+            Ctrl = true,
+            Alt = true,
+            CooldownSeconds = 5
+        };
+
+        AssertTrue(
+            matcher.TryMatch(settings, new HotspotKeyEvent("f9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "Key names should be compared case-insensitively.");
+        AssertTrue(matcher.LastTriggeredAt is not null, "A match should record the trigger time.");
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "The cooldown should suppress an immediate second trigger.");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(5));
+        AssertTrue(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "The shortcut should match again once the cooldown elapsed.");
+
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: false, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "A missing modifier must not match.");
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: true, Meta: false, IsAutoRepeat: false)),
+            "An extra modifier must not match.");
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: true, IsAutoRepeat: false)),
+            "An extra Meta modifier must not match.");
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F8", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "Another key must not match.");
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: true)),
+            "Holding the key (auto repeat) must not retrigger.");
+
+        settings.Enabled = false;
+        AssertFalse(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "A disabled shortcut must not match.");
+
+        settings.Enabled = true;
+        settings.KeyName = " f9 ";
+        timeProvider.Advance(TimeSpan.FromSeconds(5));
+        AssertTrue(
+            matcher.TryMatch(settings, new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false)),
+            "The stored key name should be trimmed before comparing.");
+
+        matcher.Reset();
+        AssertTrue(matcher.LastTriggeredAt is null, "Reset should clear the trigger time.");
+
+        AssertTrue(HotspotShortcutKeys.Contains("a"), "Key candidate lookup should be case-insensitive.");
+        AssertTrue(HotspotShortcutKeys.Contains("F12"), "Function keys should be available as candidates.");
+        AssertTrue(HotspotShortcutKeys.Contains("PageUp"), "Navigation keys should be available as candidates.");
+        AssertFalse(HotspotShortcutKeys.Contains("NotAKey"), "Unknown key names should be rejected.");
+        AssertTrue(HotspotShortcutKeys.All.Count > 60, "The candidate list should cover letters, digits, function keys and more.");
+        return Task.CompletedTask;
+    }
+
+
+    private static Task TestSettingsStoreShortcutRoundtripAsync()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(root, "settings.json");
+            var first = new HotspotPluginSettingsStore(path);
+            AssertFalse(first.Shortcut.Enabled, "The shortcut should be disabled by default.");
+            AssertEqual("F9", first.Shortcut.KeyName, "The default trigger key should be F9.");
+            AssertTrue(first.Shortcut.Ctrl && first.Shortcut.Alt, "The default combination should be Ctrl+Alt.");
+            AssertEqual(5, first.Shortcut.CooldownSeconds, "The default cooldown should be 5 seconds.");
+
+            first.UpdateShortcut(settings =>
+            {
+                settings.Enabled = true;
+                settings.KeyName = "PageUp";
+                settings.Meta = true;
+                settings.CooldownSeconds = 9999;
+            });
+            AssertTrue(first.Shortcut.Enabled, "The shortcut flag should be updated.");
+            AssertEqual(600, first.Shortcut.CooldownSeconds, "Out-of-range cooldowns should be clamped to the maximum.");
+            AssertEqual("Ctrl+Alt+Win+PageUp", first.Shortcut.DescribeShortcut(), "The description should list modifiers then the key.");
+
+            var second = new HotspotPluginSettingsStore(path);
+            AssertTrue(second.Shortcut.Enabled, "The shortcut flag should roundtrip through the settings file.");
+            AssertEqual("PageUp", second.Shortcut.KeyName, "The trigger key should roundtrip through the settings file.");
+            AssertTrue(second.Shortcut.Meta, "Modifier flags should roundtrip through the settings file.");
+
+            second.UpdateShortcut(settings => settings.KeyName = "不存在的键");
+            AssertEqual("F9", second.Shortcut.KeyName, "An unknown key name should fall back to the default.");
+
+            second.UpdateShortcut(settings => settings.CooldownSeconds = 0);
+            AssertEqual(1, second.Shortcut.CooldownSeconds, "Cooldowns below the minimum should be clamped.");
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+
+    private static async Task TestShortcutRestartAsync()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var settingsStore = new HotspotPluginSettingsStore(Path.Combine(root, "settings.json"))
+            {
+                AutoStartGuard = true,
+                StartupTarget = GuardTargetState.On
+            };
+            settingsStore.UpdateShortcut(settings =>
+            {
+                settings.Enabled = true;
+                settings.KeyName = "F9";
+                settings.Ctrl = true;
+                settings.Alt = true;
+                settings.CooldownSeconds = 5;
+            });
+
+            var runtimeState = new HotspotGuardRuntimeState();
+            var controller = new FakeHotspotController(HotspotActualState.On);
+            var timeProvider = new ManualTimeProvider(new DateTimeOffset(2026, 3, 27, 0, 0, 0, TimeSpan.Zero));
+            var coordinator = new HotspotGuardCoordinator(
+                controller,
+                settingsStore,
+                runtimeState,
+                new RecordingGuardStatusNotifier(),
+                timeProvider);
+            await coordinator.InitializeAsync(CancellationToken.None);
+            controller.ResetCounts();
+
+            var source = new FakeHotkeySource();
+            var service = new HotspotShortcutHostedService(
+                new HotspotShortcutMatcher(timeProvider),
+                source,
+                settingsStore,
+                runtimeState,
+                coordinator);
+
+            service.RefreshSourceState();
+            AssertEqual(1, source.AttachAttempts, "Refresh should try to attach while the source is unavailable.");
+            AssertFalse(runtimeState.ShortcutSourceAvailable, "Runtime state should report a missing KeyboardCapture plugin.");
+            AssertTrue(!string.IsNullOrWhiteSpace(runtimeState.ShortcutSourceMessage), "Runtime state should carry the source message.");
+
+            source.IsAvailable = true;
+            source.LastError = null;
+            service.RefreshSourceState();
+            AssertTrue(runtimeState.ShortcutSourceAvailable, "Runtime state should report an available source after attaching.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.ShortcutSourceMessage), "A successful attach should clear the message.");
+
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: false, Shift: false, Meta: false, IsAutoRepeat: false));
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: true));
+            AssertEqual(0, controller.StopCallCount, "Unmatched events must not restart the hotspot.");
+
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertEqual(1, controller.StopCallCount, "A matching shortcut should stop the hotspot.");
+            AssertEqual(1, controller.StartCallCount, "A matching shortcut should start the hotspot again.");
+            AssertTrue(runtimeState.LastShortcutTriggeredAt is not null, "The trigger time should be recorded on the runtime state.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.LastShortcutError), "A successful restart should not record an error.");
+
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertEqual(1, controller.StopCallCount, "The cooldown should suppress a second trigger.");
+
+            timeProvider.Advance(TimeSpan.FromSeconds(6));
+            controller.FailNextSet = true;
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertTrue(!string.IsNullOrWhiteSpace(runtimeState.LastShortcutError), "A failed shortcut restart should be recorded as an error.");
+
+            // 事件链路：服务启动后订阅来源事件，来源触发的事件应命中同一条处理链路。
+            timeProvider.Advance(TimeSpan.FromSeconds(6));
+            controller.FailNextSet = false;
+            await service.StartAsync(CancellationToken.None);
+            try
+            {
+                // .NET 10 起 ExecuteAsync 整体在 Task 上执行，订阅可能晚于 StartAsync 返回
+                await WaitUntilAsync(() => source.SubscriberCount > 0);
+                controller.ResetCounts();
+                source.RaiseKeyPressed("F9", ctrl: true, alt: true, shift: false, meta: false);
+                await Task.Delay(200);
+                AssertEqual(1, controller.StopCallCount, "Events raised by the source should reach the shortcut handler.");
+            }
+            finally
+            {
+                await service.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+
+    private static Task TestKeyboardCaptureSourceWithoutHostAsync()
+    {
+        // 真实连接需要 ClassIsland 宿主提供 ClassIsland.Shared 程序集（自测进程里没有），
+        // 因此这里只验证「未连接」时的安全初始状态，实际连接在 ClassIsland 里人工验证。
+        var source = new KeyboardCaptureHotkeySource();
+        AssertFalse(source.IsAvailable, "The optional keyboard source should start as unavailable.");
+        AssertTrue(source.LastError is null, "No connection error should be recorded before the first attach attempt.");
+
+        source.Detach();
+        AssertFalse(source.IsAvailable, "Detaching an unattached source should be a no-op.");
+        return Task.CompletedTask;
+    }
+
+
     private static Task TestNetworkSpeedTextFormattingAsync()
     {
         AssertEqual("0 B/s", NetworkSpeedFormatter.FormatRate(0), "A zero rate should render as 0 B/s.");
@@ -1164,6 +1383,56 @@ public static class Program
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
         {
             throw new InvalidOperationException($"{message} Expected: {expected}; Actual: {actual}.");
+        }
+    }
+
+    /// <summary>
+    /// 等待条件成立（最多 <paramref name="timeoutMilliseconds"/> 毫秒）。
+    /// 用于兼容 .NET 10 起 <c>BackgroundService</c> 把整个 <c>ExecuteAsync</c> 交给 Task 执行的语义：
+    /// <c>StartAsync</c> 返回时后台服务可能尚未完成订阅等初始化动作。
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMilliseconds = 2000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (!condition() && Environment.TickCount64 < deadline)
+        {
+            await Task.Delay(10);
+        }
+    }
+
+    private sealed class FakeHotkeySource : IHotspotHotkeySource
+    {
+        private EventHandler<HotspotKeyEvent>? _keyPressed;
+
+        public event EventHandler<HotspotKeyEvent>? KeyPressed
+        {
+            add => _keyPressed += value;
+            remove => _keyPressed -= value;
+        }
+
+        /// <summary>当前订阅者数量，用于等待后台服务完成订阅。</summary>
+        public int SubscriberCount => _keyPressed?.GetInvocationList().Length ?? 0;
+
+        public bool IsAvailable { get; set; }
+
+        public string? LastError { get; set; }
+
+        public int AttachAttempts { get; private set; }
+
+        public bool TryAttach()
+        {
+            AttachAttempts++;
+            if (!IsAvailable)
+            {
+                LastError = "未检测到 KeyboardCapture 插件（未安装或尚未加载）。";
+            }
+
+            return IsAvailable;
+        }
+
+        public void RaiseKeyPressed(string keyName, bool ctrl, bool alt, bool shift, bool meta, bool isAutoRepeat = false)
+        {
+            _keyPressed?.Invoke(this, new HotspotKeyEvent(keyName, ctrl, alt, shift, meta, isAutoRepeat));
         }
     }
 
