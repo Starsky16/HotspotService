@@ -12,6 +12,12 @@ public sealed class HotspotGuardCoordinator
     private readonly SemaphoreSlim _syncGate = new(1, 1);
     private static readonly int MaxConsecutiveAutoRestarts = 3;
     private static readonly TimeSpan AutoRestartPauseDuration = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// 重启/恢复后的连接数恢复窗口：窗口内只要连接数仍是 0，就不受“连接数刷新间隔”门控，
+    /// 按轮询周期持续重读，直到读到真实连接数（客户端重新接入需要时间）。
+    /// </summary>
+    private static readonly TimeSpan ClientInfoRecoveryWindow = TimeSpan.FromMinutes(2);
     private int _initialized;
     private int _consecutiveFailureCount;
     private int _consecutiveAutoRestarts;
@@ -19,6 +25,7 @@ public sealed class HotspotGuardCoordinator
     private DateTimeOffset? _lastRestartAt;
     private DateTimeOffset? _autoRestartPausedUntil;
     private DateTimeOffset? _lastClientInfoRefreshAt;
+    private DateTimeOffset? _clientInfoRecoveryDeadline;
 
     public HotspotGuardCoordinator(
         IHotspotController hotspotController,
@@ -47,7 +54,7 @@ public sealed class HotspotGuardCoordinator
 
         if (guardChanged || (_runtimeState.GuardEnabled && (targetChanged || syncChanged)))
         {
-            _guardStatusNotifier.NotifyGuardStatusChanged();
+            NotifyGuardStatusChanged();
         }
     }
 
@@ -63,7 +70,7 @@ public sealed class HotspotGuardCoordinator
 
         if (changed || syncChanged)
         {
-            _guardStatusNotifier.NotifyGuardStatusChanged();
+            NotifyGuardStatusChanged();
         }
     }
 
@@ -86,7 +93,7 @@ public sealed class HotspotGuardCoordinator
 
         if (changed || syncChanged)
         {
-            _guardStatusNotifier.NotifyGuardStatusChanged();
+            NotifyGuardStatusChanged();
         }
     }
 
@@ -99,7 +106,7 @@ public sealed class HotspotGuardCoordinator
     {
         if (await RequestSyncCoreAsync(false, cancellationToken))
         {
-            _guardStatusNotifier.NotifyGuardStatusChanged();
+            NotifyGuardStatusChanged();
         }
     }
 
@@ -112,7 +119,7 @@ public sealed class HotspotGuardCoordinator
     {
         if (await RequestSyncCoreAsync(forceApply, cancellationToken))
         {
-            _guardStatusNotifier.NotifyGuardStatusChanged();
+            NotifyGuardStatusChanged();
         }
     }
 
@@ -124,12 +131,29 @@ public sealed class HotspotGuardCoordinator
             var changed = await RestartHotspotCoreAsync(cancellationToken);
             if (changed)
             {
-                _guardStatusNotifier.NotifyGuardStatusChanged();
+                NotifyGuardStatusChanged();
             }
         }
         finally
         {
             _syncGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 通知规则集守护状态变化。通知属于尽力而为的副作用：
+    /// 这里必须吞掉异常，否则一次通知失败会让后台巡检循环整体中断，
+    /// 之后守护状态与连接数刷新都会永久停止（只能重启应用恢复）。
+    /// </summary>
+    private void NotifyGuardStatusChanged()
+    {
+        try
+        {
+            _guardStatusNotifier.NotifyGuardStatusChanged();
+        }
+        catch
+        {
+            // 通知失败不影响守护与状态刷新。
         }
     }
 
@@ -146,16 +170,16 @@ public sealed class HotspotGuardCoordinator
         }
     }
 
-    private async Task<bool> RefreshClientStatsAsync(CancellationToken cancellationToken)
+    private async Task<(bool Changed, bool Succeeded)> RefreshClientStatsAsync(CancellationToken cancellationToken)
     {
         var connected = await _hotspotController.GetConnectedClientCountAsync(cancellationToken);
         var max = await _hotspotController.GetMaxClientCountAsync(cancellationToken);
         var changed = _runtimeState.SetConnectedClientCount(connected);
         changed |= _runtimeState.SetMaxClientCount(max);
-        return changed;
+        return (changed, true);
     }
 
-    private async Task<bool> TryRefreshClientStatsAsync(CancellationToken cancellationToken)
+    private async Task<(bool Changed, bool Succeeded)> TryRefreshClientStatsAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -167,8 +191,9 @@ public sealed class HotspotGuardCoordinator
         }
         catch
         {
-            // 客户端计数读取失败不判定主同步失败，仅降级保留上次计数。
-            return false;
+            // 客户端计数读取失败不判定主同步失败，仅降级保留上次计数，
+            // 并标记本次未读到值（调用方据此不推进刷新时间戳，下一轮立即重试）。
+            return (false, false);
         }
     }
 
@@ -192,10 +217,17 @@ public sealed class HotspotGuardCoordinator
 
     private async Task<bool> TryRefreshClientInfoAsync(CancellationToken cancellationToken)
     {
-        var changed = await TryRefreshClientStatsAsync(cancellationToken);
-        changed |= await TryRefreshConnectedClientsAsync(cancellationToken);
-        _lastClientInfoRefreshAt = _timeProvider.GetUtcNow();
-        return changed;
+        var (statsChanged, statsRead) = await TryRefreshClientStatsAsync(cancellationToken);
+        var listChanged = await TryRefreshConnectedClientsAsync(cancellationToken);
+
+        if (statsRead)
+        {
+            // 只有真正读到值才推进时间戳：读取失败时保持旧时间戳，
+            // 下一轮巡检会立刻重试，而不是再等一个完整间隔。
+            _lastClientInfoRefreshAt = _timeProvider.GetUtcNow();
+        }
+
+        return statsChanged | listChanged;
     }
 
     private async Task<bool> TryRefreshClientInfoIfDueAsync(
@@ -207,6 +239,15 @@ public sealed class HotspotGuardCoordinator
         var due = forceApply
             || _lastClientInfoRefreshAt is null
             || now - _lastClientInfoRefreshAt.Value >= interval;
+
+        // 恢复窗口内读到的仍是 0（客户端通常还没回连完）时不受间隔门控限制：
+        // 只要热点在运行就按轮询周期重读。读到非 0 或窗口结束后即恢复按配置间隔刷新，
+        // 因此“确实没有设备连接”这一正常状态不会长期高频读取。
+        if (!due && _runtimeState.ConnectedClientCount == 0 && IsClientInfoRecoveryActive(now))
+        {
+            due = true;
+        }
+
         if (!due)
         {
             return false;
@@ -215,10 +256,22 @@ public sealed class HotspotGuardCoordinator
         return await TryRefreshClientInfoAsync(cancellationToken);
     }
 
+    /// <summary>是否处于重启/恢复后的连接数恢复窗口内。</summary>
+    private bool IsClientInfoRecoveryActive(DateTimeOffset now)
+    {
+        return _clientInfoRecoveryDeadline is { } deadline && now < deadline;
+    }
+
+    /// <summary>开启连接数恢复窗口（重启、被守护拉起、或由关闭/切换中恢复为运行态时调用）。</summary>
+    private void StartClientInfoRecoveryWindow(DateTimeOffset now)
+    {
+        _clientInfoRecoveryDeadline = now + ClientInfoRecoveryWindow;
+    }
+
     /// <summary>
     /// 按热点实际状态刷新客户端信息：关闭时确定性清零（避免旧值误判/误导）；
-    /// 切换中不读取（避免瞬时 0 覆盖真实数据）；运行中按配置间隔刷新，
-    /// 刚启动或由非运行态切到运行态时可强制立即刷新一次。
+    /// 切换中默认不读取（避免瞬时 0 覆盖真实数据），但连接数仍为 0 时继续按周期重读；
+    /// 运行中按配置间隔刷新，刚启动或由非运行态切到运行态时可强制立即刷新一次。
     /// </summary>
     private async Task<bool> SyncClientInfoForStateAsync(
         HotspotActualState state,
@@ -234,7 +287,11 @@ public sealed class HotspotGuardCoordinator
                 return offChanged;
 
             case HotspotActualState.Transitioning:
-                return false;
+                // 切换中默认不读取，避免瞬时 0 覆盖真实数据；
+                // 但显示值仍是 0 说明没有可被覆盖的数据（典型场景：重启后客户端还没回连，
+                // WinRT 又长时间停在“切换中”），此时继续按周期重读，避免连接数永久停在 0。
+                return _runtimeState.ConnectedClientCount == 0
+                    && await TryRefreshClientInfoIfDueAsync(true, _timeProvider.GetUtcNow(), cancellationToken);
 
             default:
                 return await TryRefreshClientInfoIfDueAsync(forceRefresh, _timeProvider.GetUtcNow(), cancellationToken);
@@ -303,8 +360,16 @@ public sealed class HotspotGuardCoordinator
             }
 
             // 热点刚被守护拉起，或刚从关闭/切换中切到运行态时强制刷新一次，
-            // 让连接数尽快反映真实状态（不会被“间隔门控”拖延）。
+            // 让连接数尽快反映真实状态（不会被“间隔门控”拖延）；
+            // 同时开启恢复窗口，保证客户端陆续回连时能读到真实连接数而不是长期停在 0。
             var transitionedToRunning = previousState != HotspotActualState.On && actualState == HotspotActualState.On;
+            if (justStarted
+                || (previousState is HotspotActualState.Off or HotspotActualState.Transitioning
+                    && actualState == HotspotActualState.On))
+            {
+                StartClientInfoRecoveryWindow(now);
+            }
+
             changed |= await SyncClientInfoForStateAsync(
                 actualState,
                 forceRefresh: forceApply || justStarted || transitionedToRunning,
@@ -410,9 +475,12 @@ public sealed class HotspotGuardCoordinator
         _runtimeState.SetLastError(null);
 
         // 重启会断开全部设备再重新接入，立即强制刷新一次，
-        // 避免间隔门控让界面继续显示重启前的旧连接数。
+        // 避免间隔门控让界面继续显示重启前的旧连接数；
+        // 同时开启恢复窗口：此刻客户端通常还没回连（读到的是 0），
+        // 窗口内会按轮询周期继续重读，直到读到真实连接数。
         if (actualState == HotspotActualState.On)
         {
+            StartClientInfoRecoveryWindow(_timeProvider.GetUtcNow());
             changed |= await TryRefreshClientInfoAsync(cancellationToken);
         }
 

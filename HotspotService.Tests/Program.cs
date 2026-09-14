@@ -40,6 +40,12 @@ public static class Program
         await RunTestAsync("Auto restart pauses after repeated restarts", TestAutoRestartPausesAfterRepeatedRestartsAsync);
         await RunTestAsync("Restart counter resets when condition clears", TestRestartCountResetsWhenConditionClearsAsync);
         await RunTestAsync("Client count read failure does not fail sync", TestClientCountReadFailureDoesNotFailSyncAsync);
+        await RunTestAsync("Transitioning hotspots keep retrying while the client count is zero", TestTransitioningRetriesWhileCountZeroAsync);
+        await RunTestAsync("Transitioning hotspots keep the last known client count", TestTransitioningKeepsLastClientCountAsync);
+        await RunTestAsync("Client count recovers inside the post-restart recovery window", TestClientCountRecoversInRecoveryWindowAsync);
+        await RunTestAsync("Client count recovery window expires", TestClientCountRecoveryWindowExpiresAsync);
+        await RunTestAsync("Failed client count read is retried on the next check", TestClientCountFailureRetriesNextCheckAsync);
+        await RunTestAsync("Guard status notification failure does not break the periodic check", TestNotifierFailureDoesNotBreakCheckAsync);
         await RunTestAsync("Failed manual restart propagates exception", TestManualRestartFailurePropagatesAsync);
         await RunTestAsync("Network speed text is formatted for display", TestNetworkSpeedTextFormattingAsync);
         await RunTestAsync("Network interface resolver picks hotspot and internet adapters", TestNetworkInterfaceResolverAsync);
@@ -510,6 +516,129 @@ public static class Program
 
         AssertEqual(0, context.Controller.SetStateCallCount, "Client count read failure should not affect the main sync.");
         AssertTrue(string.IsNullOrWhiteSpace(context.RuntimeState.LastError), "Client count read failure should not record a sync error.");
+    }
+
+    /// <summary>
+    /// 网卡复位后 WinRT 可能长时间报告“切换中”：此时若连接数还是 0（重启后客户端尚未回连），
+    /// 必须继续重读，否则界面会永久停在 0。
+    /// </summary>
+    private static async Task TestTransitioningRetriesWhileCountZeroAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.Transitioning, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        AssertEqual(0, context.RuntimeState.ConnectedClientCount, "Client count should start at zero in this scenario.");
+
+        context.Controller.ConnectedClientCount = 3;
+        context.Controller.ResetCounts();
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "A zero client count must keep being read while the hotspot reports a transition.");
+        AssertEqual(3, context.RuntimeState.ConnectedClientCount, "Client count should recover while the hotspot reports a transition.");
+    }
+
+    /// <summary>切换态下已有有效连接数时保持原有语义：不读取，避免瞬时 0 覆盖真实数据。</summary>
+    private static async Task TestTransitioningKeepsLastClientCountAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.Transitioning, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        context.Controller.ConnectedClientCount = 3;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(3, context.RuntimeState.ConnectedClientCount, "Client count should be read while it is still zero.");
+
+        context.Controller.ResetCounts();
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(0, context.Controller.GetClientCountCallCount, "A known client count must not be re-read while the hotspot reports a transition.");
+        AssertEqual(3, context.RuntimeState.ConnectedClientCount, "Client count should stay unchanged while the hotspot reports a transition.");
+    }
+
+    /// <summary>
+    /// 重启/被守护拉起后，客户端回连需要时间：恢复窗口内即使刷新间隔远未到期，
+    /// 只要读数还是 0 就要按轮询周期继续重读。
+    /// </summary>
+    private static async Task TestClientCountRecoversInRecoveryWindowAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.Off, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.ClientCountRefreshSeconds = 3600;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        AssertEqual(1, context.Controller.StartCallCount, "Guard should start the hotspot on initialization.");
+        AssertEqual(0, context.RuntimeState.ConnectedClientCount, "Client count should be zero right after the hotspot starts.");
+
+        context.Controller.ConnectedClientCount = 2;
+        context.Controller.ResetCounts();
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "Client count should be re-read inside the recovery window even when the refresh interval has not elapsed.");
+        AssertEqual(2, context.RuntimeState.ConnectedClientCount, "Client count should recover as soon as clients reconnect.");
+    }
+
+    /// <summary>恢复窗口过期后必须回到按配置间隔刷新，避免 0 值长期高频读取。</summary>
+    private static async Task TestClientCountRecoveryWindowExpiresAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.Off, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.ClientCountRefreshSeconds = 300;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+
+        context.Controller.ConnectedClientCount = 2;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(2, context.RuntimeState.ConnectedClientCount, "Client count should be read inside the recovery window.");
+
+        // 窗口（2 分钟）已过期且刷新间隔（5 分钟）未到：读数为 0 也不再追读。
+        context.Controller.ConnectedClientCount = 0;
+        context.Controller.ResetCounts();
+        context.TimeProvider.Advance(TimeSpan.FromMinutes(2));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(0, context.Controller.GetClientCountCallCount, "The configured refresh interval must apply again after the recovery window expires.");
+
+        // 间隔到期后恢复常规刷新。
+        context.Controller.ConnectedClientCount = 3;
+        context.TimeProvider.Advance(TimeSpan.FromMinutes(5));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(3, context.RuntimeState.ConnectedClientCount, "Scheduled refresh should resume after the configured interval elapses.");
+    }
+
+    /// <summary>读取失败时不能推进刷新时间戳，否则要再等一个完整间隔才会重试。</summary>
+    private static async Task TestClientCountFailureRetriesNextCheckAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        context.SettingsStore.ClientCountRefreshSeconds = 300;
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        context.Controller.ConnectedClientCount = 2;
+
+        context.Controller.FailNextClientCountRead = true;
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(301));
+        context.Controller.ResetCounts();
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "The scheduled client count read should be attempted.");
+        AssertEqual(0, context.RuntimeState.ConnectedClientCount, "A failed read must not change the displayed client count.");
+
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        context.Controller.ResetCounts();
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+        AssertEqual(1, context.Controller.GetClientCountCallCount, "A failed read must be retried on the next check instead of waiting for a full interval.");
+        AssertEqual(2, context.RuntimeState.ConnectedClientCount, "The retry should pick up the real client count.");
+    }
+
+    /// <summary>规则集通知失败属于副作用异常，不能中断巡检（否则守护与连接数刷新会永久停止）。</summary>
+    private static async Task TestNotifierFailureDoesNotBreakCheckAsync()
+    {
+        var context = CreateContext(controllerState: HotspotActualState.On, autoStartGuard: true, startupTarget: GuardTargetState.On);
+        await context.Coordinator.InitializeAsync(CancellationToken.None);
+        context.Controller.ConnectedClientCount = 4;
+        context.Controller.ResetCounts();
+        context.Notifier.ThrowOnNotify = true;
+
+        context.TimeProvider.Advance(TimeSpan.FromSeconds(11));
+        await context.Coordinator.RunPeriodicCheckAsync(CancellationToken.None);
+
+        AssertEqual(4, context.RuntimeState.ConnectedClientCount, "A failing status notification must not stop the client count refresh.");
     }
 
     private static async Task TestPeriodicCheckRefreshesConnectedClientsAsync()
@@ -1320,9 +1449,17 @@ public static class Program
     {
         public int NotificationCount { get; private set; }
 
+        /// <summary>置为 true 后通知会抛出异常，用于验证通知失败不影响巡检。</summary>
+        public bool ThrowOnNotify { get; set; }
+
         public void NotifyGuardStatusChanged()
         {
             NotificationCount++;
+
+            if (ThrowOnNotify)
+            {
+                throw new InvalidOperationException("Simulated ruleset notification failure.");
+            }
         }
     }
 
