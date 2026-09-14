@@ -57,7 +57,26 @@ public sealed class WinRtHotspotController : IHotspotController
         cancellationToken.ThrowIfCancellationRequested();
 
         var manager = CreateManager();
-        return Task.FromResult((int)manager.ClientCount);
+        var reported = (int)manager.ClientCount;
+
+        // WinRT 的 ClientCount 在部分驱动/会话下会滞后，甚至长期为 0
+        // （网卡复位后由守护重启热点、客户端重新接入时尤其明显），
+        // 用实际枚举到的客户端数量交叉校验并取较大值，避免界面一直显示 0。
+        var enumerated = CountTetheringClients(manager);
+        return Task.FromResult(Math.Max(reported, enumerated));
+    }
+
+    /// <summary>枚举当前连接的热点客户端数量，失败时返回 0（以 ClientCount 为准）。</summary>
+    private static int CountTetheringClients(NetworkOperatorTetheringManager manager)
+    {
+        try
+        {
+            return manager.GetTetheringClients().Count;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     public Task<int> GetMaxClientCountAsync(CancellationToken cancellationToken)
