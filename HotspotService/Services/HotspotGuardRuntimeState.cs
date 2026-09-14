@@ -8,6 +8,10 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private bool _guardEnabled;
     private GuardTargetState _guardTarget = GuardTargetState.On;
     private HotspotActualState _lastKnownHotspotState = HotspotActualState.Unknown;
+    private HotspotSupportState _tetheringSupport;
+    private int _connectedClientCount;
+    private int _maxClientCount;
+    private IReadOnlyList<HotspotClientInfo> _connectedClients = [];
     private DateTimeOffset? _lastCheckAt;
     private string? _lastError;
 
@@ -27,6 +31,33 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _lastKnownHotspotState;
         private set => SetProperty(ref _lastKnownHotspotState, value);
+    }
+
+    /// <summary>
+    /// 当前设备是否支持开启移动热点。
+    /// </summary>
+    public HotspotSupportState TetheringSupport
+    {
+        get => _tetheringSupport;
+        private set => SetProperty(ref _tetheringSupport, value);
+    }
+
+    public int ConnectedClientCount
+    {
+        get => _connectedClientCount;
+        private set => SetProperty(ref _connectedClientCount, value);
+    }
+
+    public int MaxClientCount
+    {
+        get => _maxClientCount;
+        private set => SetProperty(ref _maxClientCount, value);
+    }
+
+    public IReadOnlyList<HotspotClientInfo> ConnectedClients
+    {
+        get => _connectedClients;
+        private set => SetProperty(ref _connectedClients, value);
     }
 
     public DateTimeOffset? LastCheckAt
@@ -60,6 +91,40 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
         var changed = LastKnownHotspotState != value;
         LastKnownHotspotState = value;
         return changed;
+    }
+
+    public bool SetTetheringSupport(HotspotSupportState value)
+    {
+        var changed = TetheringSupport != value;
+        TetheringSupport = value;
+        return changed;
+    }
+
+    public bool SetConnectedClientCount(int value)
+    {
+        var changed = ConnectedClientCount != value;
+        ConnectedClientCount = value;
+        return changed;
+    }
+
+    public bool SetMaxClientCount(int value)
+    {
+        var changed = MaxClientCount != value;
+        MaxClientCount = value;
+        return changed;
+    }
+
+    public bool SetConnectedClients(IReadOnlyList<HotspotClientInfo>? value)
+    {
+        var normalized = value ?? Array.Empty<HotspotClientInfo>();
+        if (ConnectedClients.Count == normalized.Count
+            && ConnectedClients.Select(x => x.MacAddress).SequenceEqual(normalized.Select(x => x.MacAddress)))
+        {
+            return false;
+        }
+
+        ConnectedClients = normalized;
+        return true;
     }
 
     public void SetLastCheckAt(DateTimeOffset? value)

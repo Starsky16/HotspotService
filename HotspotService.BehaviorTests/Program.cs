@@ -132,6 +132,14 @@ public static class Program
 
         public HotspotActualState CurrentState { get; set; }
 
+        public int ConnectedClientCount { get; set; }
+
+        public int MaxClientCount { get; set; } = 8;
+
+        public IReadOnlyList<HotspotClientInfo> ConnectedClients { get; set; } = [];
+
+        public HotspotSupportState TetheringSupport { get; set; } = HotspotSupportState.Supported;
+
         public int StartCallCount { get; private set; }
 
         public int StopCallCount { get; private set; }
@@ -140,6 +148,30 @@ public static class Program
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(CurrentState);
+        }
+
+        public Task<int> GetConnectedClientCountAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(ConnectedClientCount);
+        }
+
+        public Task<int> GetMaxClientCountAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(MaxClientCount);
+        }
+
+        public Task<IReadOnlyList<HotspotClientInfo>> GetConnectedClientsAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(ConnectedClients);
+        }
+
+        public Task<HotspotSupportState> GetTetheringSupportAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(TetheringSupport);
         }
 
         public Task SetStateAsync(GuardTargetState target, CancellationToken cancellationToken)
@@ -155,6 +187,16 @@ public static class Program
             }
 
             CurrentState = target.ToActualState();
+            return Task.CompletedTask;
+        }
+
+        public Task RestartAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            StopCallCount++;
+            CurrentState = HotspotActualState.Off;
+            StartCallCount++;
+            CurrentState = HotspotActualState.On;
             return Task.CompletedTask;
         }
 

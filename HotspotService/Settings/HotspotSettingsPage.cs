@@ -27,6 +27,10 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private readonly ComboBox _currentTargetComboBox;
     private readonly Button _enableGuardButton;
     private readonly Button _disableGuardButton;
+    private readonly Button _restartButton;
+    private readonly NumericUpDown _clientRefreshIntervalBox;
+    private readonly TextBlock _restartTipText = new();
+    private int _restartTipVersion;
     private readonly TextBlock _guardEnabledValue;
     private readonly TextBlock _guardTargetValue;
     private readonly TextBlock _hotspotStateValue;
@@ -165,6 +169,70 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         manualControlPanel.Children.Add(liveControlRow);
         mainPanel.Children.Add(manualControlPanel);
 
+        var maintenancePanel = new StackPanel
+        {
+            Spacing = 8
+        };
+        maintenancePanel.Children.Add(new TextBlock
+        {
+            Text = "热点维护"
+        });
+        var restartRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _restartButton = new Button
+        {
+            Content = "立即重启热点",
+            MinWidth = 120
+        };
+        _restartButton.Click += async (_, _) => await OnRestartClickedAsync();
+        restartRow.Children.Add(_restartButton);
+        maintenancePanel.Children.Add(restartRow);
+        maintenancePanel.Children.Add(_restartTipText);
+        mainPanel.Children.Add(maintenancePanel);
+
+        var refreshPanel = new StackPanel
+        {
+            Spacing = 8
+        };
+        refreshPanel.Children.Add(new TextBlock
+        {
+            Text = "连接数刷新间隔（秒）"
+        });
+        _clientRefreshIntervalBox = new NumericUpDown
+        {
+            Minimum = 5,
+            Maximum = 3600,
+            Increment = 5,
+            Value = Math.Max(5, _settingsStore.ClientCountRefreshSeconds),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 120
+        };
+        _clientRefreshIntervalBox.ValueChanged += (_, _) =>
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+
+            if (_clientRefreshIntervalBox.Value is { } value)
+            {
+                _settingsStore.ClientCountRefreshSeconds = Math.Clamp((int)value, 5, 3600);
+            }
+        };
+        refreshPanel.Children.Add(_clientRefreshIntervalBox);
+        refreshPanel.Children.Add(new TextBlock
+        {
+            Text = "连接设备数量与设备列表的刷新频率，范围 5–3600 秒。守护状态本身仍按每 10 秒一次检查，不受此设置影响。",
+            FontSize = 12,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+        mainPanel.Children.Add(refreshPanel);
+
         var statusBorder = new Border
         {
             BorderBrush = Brushes.Gray,
@@ -219,6 +287,43 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private void PostUpdateUi()
     {
         Dispatcher.UIThread.Post(UpdateUi);
+    }
+
+    private async Task OnRestartClickedAsync()
+    {
+        _restartButton.IsEnabled = false;
+        try
+        {
+            await _coordinator.RestartHotspotAsync();
+            ShowRestartTip("重启指令已执行，热点已重新启动。");
+        }
+        catch (Exception ex)
+        {
+            ShowRestartTip($"重启失败：{ex.Message}");
+        }
+        finally
+        {
+            _restartButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowRestartTip(string message)
+    {
+        var version = ++_restartTipVersion;
+        _restartTipText.Text = message;
+        _ = ClearRestartTipAsync(version);
+    }
+
+    private async Task ClearRestartTipAsync(int version)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(8));
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (version == _restartTipVersion)
+            {
+                _restartTipText.Text = string.Empty;
+            }
+        });
     }
 
     private void UpdateUi()
