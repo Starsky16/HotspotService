@@ -226,7 +226,8 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         refreshPanel.Children.Add(_clientRefreshIntervalBox);
         refreshPanel.Children.Add(new TextBlock
         {
-            Text = "连接设备数量与设备列表的刷新频率，范围 5–3600 秒。守护状态本身仍按每 10 秒一次检查，不受此设置影响。",
+            Text = "连接设备数量与设备列表的刷新频率，范围 5–3600 秒。守护状态本身仍按每 10 秒一次检查，不受此设置影响；"
+                   + "热点重启或恢复后的 2 分钟内，连接数为 0 时会按 10 秒周期重试，以便客户端回连后尽快显示真实数量。",
             FontSize = 12,
             Opacity = 0.8,
             TextWrapping = TextWrapping.Wrap
