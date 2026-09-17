@@ -945,6 +945,8 @@ public static class Program
             await service.StartAsync(CancellationToken.None);
             try
             {
+                // .NET 10 起 ExecuteAsync 整体在 Task 上执行，订阅可能晚于 StartAsync 返回
+                await WaitUntilAsync(() => source.SubscriberCount > 0);
                 controller.ResetCounts();
                 source.RaiseKeyPressed("F9", ctrl: true, alt: true, shift: false, meta: false);
                 await Task.Delay(200);
@@ -1384,9 +1386,32 @@ public static class Program
         }
     }
 
+    /// <summary>
+    /// 等待条件成立（最多 <paramref name="timeoutMilliseconds"/> 毫秒）。
+    /// 用于兼容 .NET 10 起 <c>BackgroundService</c> 把整个 <c>ExecuteAsync</c> 交给 Task 执行的语义：
+    /// <c>StartAsync</c> 返回时后台服务可能尚未完成订阅等初始化动作。
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMilliseconds = 2000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMilliseconds;
+        while (!condition() && Environment.TickCount64 < deadline)
+        {
+            await Task.Delay(10);
+        }
+    }
+
     private sealed class FakeHotkeySource : IHotspotHotkeySource
     {
-        public event EventHandler<HotspotKeyEvent>? KeyPressed;
+        private EventHandler<HotspotKeyEvent>? _keyPressed;
+
+        public event EventHandler<HotspotKeyEvent>? KeyPressed
+        {
+            add => _keyPressed += value;
+            remove => _keyPressed -= value;
+        }
+
+        /// <summary>当前订阅者数量，用于等待后台服务完成订阅。</summary>
+        public int SubscriberCount => _keyPressed?.GetInvocationList().Length ?? 0;
 
         public bool IsAvailable { get; set; }
 
@@ -1407,7 +1432,7 @@ public static class Program
 
         public void RaiseKeyPressed(string keyName, bool ctrl, bool alt, bool shift, bool meta, bool isAutoRepeat = false)
         {
-            KeyPressed?.Invoke(this, new HotspotKeyEvent(keyName, ctrl, alt, shift, meta, isAutoRepeat));
+            _keyPressed?.Invoke(this, new HotspotKeyEvent(keyName, ctrl, alt, shift, meta, isAutoRepeat));
         }
     }
 
