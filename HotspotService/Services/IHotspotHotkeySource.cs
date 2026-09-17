@@ -22,4 +22,12 @@ public interface IHotspotHotkeySource
     /// 可以重复调用（用于适配插件加载顺序）。
     /// </summary>
     bool TryAttach();
+
+    /// <summary>
+    /// 断开与 KeyboardCapture 服务的连接并退订事件。
+    /// 应与 <see cref="TryAttach"/> 成对调用（插件停机时必须调用），
+    /// 否则宿主级的 KeyboardCapture 单例服务会一直持有本实现实例，导致内存泄漏。
+    /// 可以重复调用（幂等），未连接时是空操作；实现内部消化异常并写入 <see cref="LastError"/>，不向调用方抛出。
+    /// </summary>
+    void Detach();
 }

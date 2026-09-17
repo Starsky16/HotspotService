@@ -956,6 +956,10 @@ public static class Program
             {
                 await service.StopAsync(CancellationToken.None);
             }
+
+            // 停机必须断开对宿主级单例服务的订阅，否则会残留订阅并导致来源实例无法回收。
+            AssertEqual(1, source.DetachCallCount, "Stopping the service should detach the keyboard source exactly once.");
+            AssertEqual(0, source.SubscriberCount, "Stopping the service should remove the KeyPressed subscription.");
         }
         finally
         {
@@ -1419,6 +1423,9 @@ public static class Program
 
         public int AttachAttempts { get; private set; }
 
+        /// <summary>Detach 调用次数，用于验证停机时确实断开了订阅。</summary>
+        public int DetachCallCount { get; private set; }
+
         public bool TryAttach()
         {
             AttachAttempts++;
@@ -1428,6 +1435,12 @@ public static class Program
             }
 
             return IsAvailable;
+        }
+
+        public void Detach()
+        {
+            // 可重复调用（幂等）。
+            DetachCallCount++;
         }
 
         public void RaiseKeyPressed(string keyName, bool ctrl, bool alt, bool shift, bool meta, bool isAutoRepeat = false)
