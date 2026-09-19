@@ -77,7 +77,8 @@ public sealed class KeyboardCaptureHotkeySource : IHotspotHotkeySource
         }
     }
 
-    /// <summary>取消订阅（服务停止时调用）。</summary>
+    /// <inheritdoc />
+    /// <remarks>服务停止时调用；可重复调用，未连接时为空操作。</remarks>
     public void Detach()
     {
         IKeyboardCaptureService? service;
