@@ -36,7 +36,14 @@ public sealed class HotspotThroughputBackgroundService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            SampleOnce();
+            try
+            {
+                SampleOnce();
+            }
+            catch
+            {
+                // 单次采样失败（例如网卡临时不可读）不应终止采样循环，下一周期重试即可。
+            }
 
             try
             {
