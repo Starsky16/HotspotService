@@ -60,6 +60,9 @@ public sealed class HotspotShortcutHostedService : BackgroundService
         finally
         {
             _hotkeySource.KeyPressed -= OnKeyPressed;
+
+            // 停机时必须断开对宿主级单例 KeyboardCapture 服务的订阅，否则单例会一直持有本实例。
+            _hotkeySource.Detach();
         }
     }
 
