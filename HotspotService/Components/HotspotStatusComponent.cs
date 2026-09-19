@@ -25,12 +25,15 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
 {
     private static readonly Color EnabledDotColor = Color.FromRgb(0x66, 0xBB, 0x6A);
     private static readonly Color DisabledDotColor = Color.FromRgb(0xEF, 0x53, 0x50);
+    private static readonly IBrush EnabledDotBrush = new SolidColorBrush(EnabledDotColor);
+    private static readonly IBrush DisabledDotBrush = new SolidColorBrush(DisabledDotColor);
 
     private readonly HotspotGuardRuntimeState _runtimeState;
     private readonly TextBlock _statusDotText = new();
     private readonly TextBlock _clientCountText = new();
     private readonly TextBlock _throughputText = new();
     private HotspotStatusComponentSettings? _subscribedSettings;
+    private bool _subscribedRuntimeState;
 
     public HotspotStatusComponent(HotspotGuardRuntimeState runtimeState)
     {
@@ -49,10 +52,12 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
         panel.Children.Add(_clientCountText);
         panel.Children.Add(_throughputText);
         Content = panel;
-
-        _runtimeState.PropertyChanged += OnRuntimeStatePropertyChanged;
     }
 
+    /// <summary>
+    /// 订阅随视觉树建立/解除：运行时状态是单例，而宿主按瞬态解析组件（每次重建都是新实例），
+    /// 若只在构造函数订阅，单例会永久持有所有已离树的旧实例。
+    /// </summary>
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -74,13 +79,24 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
             _subscribedSettings = settings;
         }
 
+        if (!_subscribedRuntimeState)
+        {
+            _runtimeState.PropertyChanged += OnRuntimeStatePropertyChanged;
+            _subscribedRuntimeState = true;
+        }
+
         UpdateUi();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        _runtimeState.PropertyChanged -= OnRuntimeStatePropertyChanged;
+
+        if (_subscribedRuntimeState)
+        {
+            _runtimeState.PropertyChanged -= OnRuntimeStatePropertyChanged;
+            _subscribedRuntimeState = false;
+        }
 
         if (_subscribedSettings is not null)
         {
@@ -109,14 +125,14 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
             // 守护开启：绿色实心圆点。
             _statusDotText.Text = "\u25CF";
             _statusDotText.Opacity = 1.0;
-            _statusDotText.Foreground = new SolidColorBrush(EnabledDotColor);
+            _statusDotText.Foreground = EnabledDotBrush;
         }
         else
         {
             // 守护关闭：红色实心圆点。
             _statusDotText.Text = "\u25CF";
             _statusDotText.Opacity = 1.0;
-            _statusDotText.Foreground = new SolidColorBrush(DisabledDotColor);
+            _statusDotText.Foreground = DisabledDotBrush;
         }
 
         _clientCountText.IsVisible = settings?.ShowClientCount ?? true;
@@ -136,5 +152,3 @@ public sealed class HotspotStatusComponent : ComponentBase<HotspotStatusComponen
         _throughputText.IsVisible = throughputText.Length > 0;
     }
 }
-
-
