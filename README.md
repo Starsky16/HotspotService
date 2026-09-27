@@ -6,6 +6,19 @@ HotspotService（移动热点守护助手）是一个面向 ClassIsland 的 Wind
 
 > 本项目完全由 AI 开发，所有的代码、测试、打包、宣发物料均由 AI 完成。不过现在这句话是真人写的，唯一能保证的是功能正常。
 
+## 本仓库说明
+
+本仓库是 [Alan-CRL/HotspotService](https://github.com/Alan-CRL/HotspotService) 的 fork，由 Starsky16 维护。原作者署名保留在插件清单的 `author` 字段与设置页的版权声明中，本 fork 的修改在 GPL-3.0 条款下进行。
+
+fork 按 .NET 版本拆成两条独立的构建线，**默认分支为 `main_net8`**：
+
+| 构建线 | 开发分支 | 发布分支 | 目标框架 | 插件 SDK | manifest `apiVersion` |
+| --- | --- | --- | --- | --- | --- |
+| net8 | `dev_net8` | `main_net8` | `net8.0-windows10.0.17763.0` | 2.0.0.2 | 2.0.0.0 |
+| net10 | `dev_net10` | `main_net10` | `net10.0-windows10.0.17763.0` | 2.1.1.1 | 2.2.0.0 |
+
+两条线功能一致，代码差异仅在目标框架、插件 SDK 版本与清单 `apiVersion`。下载 Release 时请按自己的 ClassIsland 版本选择对应构建线。
+
 ## 项目背景
 
 在教室、一体机或值班设备场景里，词典笔、平板和其他临时联网设备往往依赖 Windows 的“移动热点”功能。实际使用中最常见的问题并不是不会开热点，而是：

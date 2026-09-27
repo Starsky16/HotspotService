@@ -7,7 +7,7 @@ id: HotspotService
 name: 移动热点守护助手
 description: 为 ClassIsland 提供 Windows 移动热点守护、守护目标同步与自动化 / 规则集接入能力。
 entranceAssembly: "HotspotService.dll"
-url: https://github.com/Alan-CRL/HotspotService
+url: https://github.com/Starsky16/HotspotService
 version: 0.3.1.0
 apiVersion: 2.0.0.0
 author: AlanCRL
@@ -19,6 +19,7 @@ dependencies:
   - id: Starsky16.KeyboardCapture
     isRequired: false
 
-repoOwner: Alan-CRL
+# 本仓库是 Starsky16 维护的 fork，原作者署名保留在 author 字段中
+repoOwner: Starsky16
 repoName: HotspotService
-assetsRoot: main/HotspotService
+assetsRoot: main_net8/HotspotService
