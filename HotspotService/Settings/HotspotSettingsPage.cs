@@ -72,7 +72,9 @@ public sealed class HotspotSettingsPage : SettingsPageBase
 
         mainPanel.Children.Add(new TextBlock
         {
-            Text = "版权所有 (c) 2026 AlanCRL(陈润林) 工作室\n本项目基于 GNU 通用公共许可证第 3 版获得许可",
+            Text = "版权所有 (c) 2026 AlanCRL(陈润林) 工作室\n"
+                + "本仓库为 Starsky16 维护的 fork，在原作者许可的 GPL-3.0 条款下进行了修改\n"
+                + "本项目基于 GNU 通用公共许可证第 3 版获得许可",
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap
         });
