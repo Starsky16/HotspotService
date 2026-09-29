@@ -55,6 +55,8 @@ public static class Program
         await RunTestAsync("Shortcut matcher requires the exact key and modifiers", TestShortcutMatcherAsync);
         await RunTestAsync("Settings store shortcut settings roundtrip and clamp", TestSettingsStoreShortcutRoundtripAsync);
         await RunTestAsync("Keyboard shortcut triggers a hotspot restart", TestShortcutRestartAsync);
+        await RunTestAsync("Keyboard shortcuts toggle the guard and the guard target", TestGuardShortcutTogglesAsync);
+        await RunTestAsync("Component hotspot state text follows the shared mapping", TestComponentStateTextAsync);
         await RunTestAsync("Optional keyboard source stays safe without a host", TestKeyboardCaptureSourceWithoutHostAsync);
 
         if (Failures.Count == 0)
@@ -297,6 +299,12 @@ public static class Program
             AssertFalse(store.AutoStartGuard, "Legacy AutoStartGuard should be loaded.");
             AssertEqual(GuardTargetState.Off, store.StartupTarget, "Legacy StartupTarget should be loaded.");
             AssertTrue(File.ReadAllText(path).TrimStart().StartsWith('{'), "Legacy settings should be migrated to JSON.");
+
+            // 旧配置没有三组快捷键（以及后加的两组）：缺键时必须回落到各自默认值，不报错、不丢其它配置。
+            AssertEqual("F9", store.Shortcut.KeyName, "A legacy file should fall back to the restart shortcut default.");
+            AssertEqual("F10", store.GuardToggleShortcut.KeyName, "A legacy file should fall back to the guard toggle default.");
+            AssertEqual("F11", store.GuardTargetToggleShortcut.KeyName, "A legacy file should fall back to the guard target toggle default.");
+            AssertFalse(store.GuardToggleShortcut.Enabled, "A legacy file should leave the new shortcut slots disabled.");
             return Task.CompletedTask;
         }
         finally
@@ -862,6 +870,25 @@ public static class Program
 
             second.UpdateShortcut(settings => settings.CooldownSeconds = 0);
             AssertEqual(1, second.Shortcut.CooldownSeconds, "Cooldowns below the minimum should be clamped.");
+
+            // 另外两组快捷键（切换守护开关 / 切换守护目标）：独立默认键、独立回落、独立持久化。
+            AssertFalse(second.GuardToggleShortcut.Enabled, "The guard toggle shortcut should be disabled by default.");
+            AssertEqual("F10", second.GuardToggleShortcut.KeyName, "The guard toggle shortcut should default to F10.");
+            AssertEqual("F11", second.GuardTargetToggleShortcut.KeyName, "The guard target toggle shortcut should default to F11.");
+
+            second.UpdateGuardToggleShortcut(settings =>
+            {
+                settings.Enabled = true;
+                settings.KeyName = "F12";
+            });
+            second.UpdateGuardTargetToggleShortcut(settings => settings.KeyName = "不存在的键");
+            AssertEqual("F11", second.GuardTargetToggleShortcut.KeyName, "An unknown key should fall back to that slot's own default.");
+
+            var third = new HotspotPluginSettingsStore(path);
+            AssertTrue(third.GuardToggleShortcut.Enabled, "The guard toggle flag should roundtrip through the settings file.");
+            AssertEqual("F12", third.GuardToggleShortcut.KeyName, "The guard toggle key should roundtrip through the settings file.");
+            AssertEqual("F11", third.GuardTargetToggleShortcut.KeyName, "The guard target toggle key should keep its own default.");
+            AssertEqual("F9", third.Shortcut.KeyName, "Writing the new slots must not disturb the restart shortcut slot.");
             return Task.CompletedTask;
         }
         finally
@@ -904,7 +931,7 @@ public static class Program
 
             var source = new FakeHotkeySource();
             var service = new HotspotShortcutHostedService(
-                new HotspotShortcutMatcher(timeProvider),
+                new HotspotShortcutMatchers(timeProvider),
                 source,
                 settingsStore,
                 runtimeState,
@@ -968,6 +995,132 @@ public static class Program
     }
 
 
+    private static async Task TestGuardShortcutTogglesAsync()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var settingsStore = new HotspotPluginSettingsStore(Path.Combine(root, "settings.json"))
+            {
+                AutoStartGuard = true,
+                StartupTarget = GuardTargetState.On
+            };
+            settingsStore.UpdateGuardToggleShortcut(settings =>
+            {
+                settings.Enabled = true;
+                settings.KeyName = "F10";
+                settings.Ctrl = true;
+                settings.Alt = true;
+                settings.CooldownSeconds = 1;
+            });
+            settingsStore.UpdateGuardTargetToggleShortcut(settings =>
+            {
+                settings.Enabled = true;
+                settings.KeyName = "F11";
+                settings.Ctrl = true;
+                settings.Alt = true;
+                settings.CooldownSeconds = 1;
+            });
+
+            var runtimeState = new HotspotGuardRuntimeState();
+            var controller = new FakeHotspotController(HotspotActualState.On);
+            var timeProvider = new ManualTimeProvider(new DateTimeOffset(2026, 3, 27, 0, 0, 0, TimeSpan.Zero));
+            var coordinator = new HotspotGuardCoordinator(
+                controller,
+                settingsStore,
+                runtimeState,
+                new RecordingGuardStatusNotifier(),
+                timeProvider);
+            await coordinator.InitializeAsync(CancellationToken.None);
+
+            var service = new HotspotShortcutHostedService(
+                new HotspotShortcutMatchers(timeProvider),
+                new FakeHotkeySource(),
+                settingsStore,
+                runtimeState,
+                coordinator);
+
+            AssertTrue(runtimeState.GuardEnabled, "The guard should start enabled so the toggle has something to turn off.");
+
+            // 切换守护开关：命中后守护关闭，且不会因为关闭守护而启停热点。
+            controller.ResetCounts();
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F10", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertFalse(runtimeState.GuardEnabled, "The guard toggle shortcut should turn the guard off.");
+            AssertEqual(0, controller.SetStateCallCount, "Turning the guard off must not touch the hotspot.");
+            AssertTrue(runtimeState.LastGuardToggleTriggeredAt is not null, "The guard toggle trigger time should be recorded.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.LastGuardToggleError), "A successful guard toggle should not record an error.");
+
+            // 冷却：同一组合在冷却时间内不应重复触发。
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F10", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertFalse(runtimeState.GuardEnabled, "The cooldown should suppress a second guard toggle.");
+
+            // 切换守护目标：命中后目标翻转；守护已关闭，因此只改目标、不碰热点。
+            controller.ResetCounts();
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F11", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertEqual(GuardTargetState.Off, runtimeState.GuardTarget, "The target toggle shortcut should flip the guard target.");
+            AssertEqual(0, controller.SetStateCallCount, "Flipping the target while the guard is disabled must not touch the hotspot.");
+            AssertTrue(runtimeState.LastGuardTargetToggleTriggeredAt is not null, "The target toggle trigger time should be recorded.");
+            AssertTrue(string.IsNullOrWhiteSpace(runtimeState.LastGuardTargetToggleError), "A successful target toggle should not record an error.");
+
+            // 守护重新开启后，再按目标切换键应当立即把热点拉回目标状态。
+            await coordinator.SetGuardEnabledAsync(true, CancellationToken.None);
+            controller.ResetCounts();
+            timeProvider.Advance(TimeSpan.FromSeconds(2));
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F11", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertEqual(GuardTargetState.On, runtimeState.GuardTarget, "The target toggle should flip back to on.");
+            AssertEqual(1, controller.StartCallCount, "Flipping the target while the guard is enabled should start the hotspot.");
+
+            // 三组快捷键互不干扰：重启组合不应命中前两组。
+            controller.ResetCounts();
+            await service.HandleKeyEventAsync(new HotspotKeyEvent("F9", Ctrl: true, Alt: true, Shift: false, Meta: false, IsAutoRepeat: false));
+            AssertEqual(0, controller.StopCallCount, "An unconfigured restart combination must not trigger anything.");
+            AssertEqual(GuardTargetState.On, runtimeState.GuardTarget, "An unrelated key press must not change the guard target.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static Task TestComponentStateTextAsync()
+    {
+        // 组件与设置页共用同一套「无法判定」触发条件：不存在无线网卡 / 状态未知 ⇒ None（设置页显示「未知」）。
+        AssertEqual(
+            "None",
+            HotspotSupportState.NotSupported.ToComponentDisplayText(HotspotActualState.Off, 0),
+            "A device without a wireless adapter should show None even though the coordinator records Off.");
+        AssertEqual(
+            "None",
+            HotspotSupportState.Unknown.ToComponentDisplayText(HotspotActualState.Unknown, 0),
+            "An unknown hotspot state should show None instead of falling through to the client count.");
+        AssertEqual(
+            "None",
+            HotspotSupportState.Supported.ToComponentDisplayText(HotspotActualState.Unknown, 3),
+            "Unknown must win over the client count, which would otherwise show a stale number.");
+        AssertEqual(
+            "3",
+            HotspotSupportState.Supported.ToComponentDisplayText(HotspotActualState.On, 3),
+            "A running hotspot should show the real client count.");
+        AssertEqual(
+            "0",
+            HotspotSupportState.Supported.ToComponentDisplayText(HotspotActualState.On, 0),
+            "Zero clients is a real number, not Off.");
+        AssertEqual(
+            "Off",
+            HotspotSupportState.Supported.ToComponentDisplayText(HotspotActualState.Off, 2),
+            "A shut hotspot should show Off.");
+        AssertEqual(
+            "Off",
+            HotspotSupportState.Supported.ToComponentDisplayText(HotspotActualState.Transitioning, 2),
+            "Transitioning is merged into Off on the component, keeping detail on the settings page.");
+
+        // 设置页仍保留细节：切换中显示为「已开启/已关闭」之外的状态文案。
+        AssertEqual("已开启", HotspotActualState.On.ToDisplayText(), "The settings page should keep its own wording for On.");
+        AssertEqual("切换中", HotspotActualState.Transitioning.ToDisplayText(), "The settings page should keep the transitioning detail.");
+        AssertEqual("未知", HotspotActualState.Unknown.ToDisplayText(), "The settings page shows Unknown for an unknown state.");
+        return Task.CompletedTask;
+    }
+
     private static Task TestKeyboardCaptureSourceWithoutHostAsync()
     {
         // 真实连接需要 ClassIsland 宿主提供 ClassIsland.Shared 程序集（自测进程里没有），
@@ -1003,36 +1156,22 @@ public static class Program
             new NetworkThroughput(4 * 1024 * 1024, 1024 * 1024),
             sampledAt);
 
-        AssertEqual(
-            "↓1.0 MB/s ↑512 KB/s",
-            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: true, showInternet: false),
-            "Component text should only contain the hotspot segment while the internet segment is hidden.");
-        AssertEqual(
-            "WAN ↓4.0 MB/s ↑1.0 MB/s",
-            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: false, showInternet: true),
-            "The internet segment should carry the WAN prefix.");
-        AssertEqual(
-            "↓1.0 MB/s ↑512 KB/s | WAN ↓4.0 MB/s ↑1.0 MB/s",
-            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: true, showInternet: true),
-            "Both segments should be joined when both targets are visible.");
-        AssertEqual(
-            string.Empty,
-            NetworkSpeedFormatter.FormatComponentText(hotspot, internet, showHotspot: false, showInternet: false),
-            "Component text should be empty when both targets are hidden.");
-        AssertEqual(
-            string.Empty,
-            NetworkSpeedFormatter.FormatComponentText(
-                NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot),
-                internet,
-                showHotspot: true,
-                showInternet: false),
-            "A readout without sampling enabled should not render any text.");
+        // 组件侧每路拆成「下行一行、上行一行」两块，两块由组件水平并排，WAN 前缀也由组件添加。
+        var hotspotSegment = NetworkSpeedFormatter.FormatComponentSegment(hotspot);
+        AssertEqual("↓1.0 MB/s", hotspotSegment?.Down, "The hotspot block should put the downlink on its own line.");
+        AssertEqual("↑512 KB/s", hotspotSegment?.Up, "The hotspot block should put the uplink on its own line.");
+        var internetSegment = NetworkSpeedFormatter.FormatComponentSegment(internet);
+        AssertEqual("↓4.0 MB/s", internetSegment?.Down, "The internet block should render its own downlink line.");
+        AssertEqual("↑1.0 MB/s", internetSegment?.Up, "The internet block should render its own uplink line.");
+        AssertTrue(
+            NetworkSpeedFormatter.FormatComponentSegment(
+                NetworkThroughputReadout.NotSampling(NetworkTrafficTarget.Hotspot)) is null,
+            "A readout without sampling enabled should not render any block.");
 
         var pending = NetworkThroughputReadout.Sampling(NetworkTrafficTarget.Hotspot, "Wi-Fi", null, sampledAt);
-        AssertEqual(
-            "↓— ↑—",
-            NetworkSpeedFormatter.FormatComponentText(pending, internet, showHotspot: true, showInternet: false),
-            "A sample without a rate yet should render placeholders instead of zero.");
+        var pendingSegment = NetworkSpeedFormatter.FormatComponentSegment(pending);
+        AssertEqual("↓—", pendingSegment?.Down, "A sample without a rate yet should render a downlink placeholder.");
+        AssertEqual("↑—", pendingSegment?.Up, "A sample without a rate yet should render an uplink placeholder.");
 
         AssertEqual(
             "未启用采样",
@@ -1041,7 +1180,7 @@ public static class Program
         AssertEqual(
             "Ethernet：↓4.0 MB/s ↑1.0 MB/s",
             NetworkSpeedFormatter.FormatStatusLine(internet),
-            "The status line should combine the interface name and both rates.");
+            "The status line should combine the interface name and both rates. The settings page row stays single-line.");
         AssertTrue(
             NetworkSpeedFormatter
                 .FormatStatusLine(NetworkThroughputReadout.Unavailable(NetworkTrafficTarget.Internet, "未找到外网网卡：测试用原因。", sampledAt))
@@ -1171,8 +1310,11 @@ public static class Program
             NetworkTrafficTarget.Hotspot,
             new NetworkInterfaceTraffic("Wi-Fi Direct", new NetworkTrafficCounters(3048, 1224), start.AddSeconds(2)));
         AssertTrue(throughput is not null, "The second sample on the same interface should produce a rate.");
-        AssertEqual(1024d, throughput.GetValueOrDefault().DownloadBytesPerSecond, "Download rate should be the counter delta over elapsed seconds.");
-        AssertEqual(512d, throughput.GetValueOrDefault().UploadBytesPerSecond, "Upload rate should be the counter delta over elapsed seconds.");
+        // 本例 2 秒内 ReceivedBytes 增量 2048、SentBytes 增量 1024。
+        // 热点目标按「连接设备终端」视角输出：终端下行 = 共享端发送 = 1024/2 = 512，
+        // 终端上行 = 共享端接收 = 2048/2 = 1024。
+        AssertEqual(512d, throughput.GetValueOrDefault().DownloadBytesPerSecond, "Hotspot downlink should be the sharing host's sent delta (device download).");
+        AssertEqual(1024d, throughput.GetValueOrDefault().UploadBytesPerSecond, "Hotspot uplink should be the sharing host's received delta (device upload).");
 
         AssertTrue(
             calculator.Calculate(
@@ -1200,6 +1342,10 @@ public static class Program
             new NetworkInterfaceTraffic("Ethernet", new NetworkTrafficCounters(2049, 3), start.AddSeconds(1)));
         AssertTrue(internetRate is not null, "The internet target should build its own baseline.");
         AssertEqual(2048d, internetRate.GetValueOrDefault().DownloadBytesPerSecond, "Targets must not share baselines.");
+        AssertEqual(
+            2d,
+            internetRate.GetValueOrDefault().UploadBytesPerSecond,
+            "The internet target must keep the host perspective: downlink = host received delta, uplink = host sent delta.");
 
         calculator.ResetAll();
         AssertTrue(
@@ -1289,8 +1435,9 @@ public static class Program
 
             var hotspotThroughput = runtimeState.HotspotThroughput.Throughput;
             AssertTrue(hotspotThroughput is not null, "The second sample should produce a rate.");
-            AssertEqual(2048d, hotspotThroughput.GetValueOrDefault().DownloadBytesPerSecond, "The download rate should come from the counter delta.");
-            AssertEqual(1024d, hotspotThroughput.GetValueOrDefault().UploadBytesPerSecond, "The upload rate should come from the counter delta.");
+            // 2 秒内共享端接收增量 4096、发送增量 2048 ⇒ 终端下行 = 发送速率 1024、终端上行 = 接收速率 2048。
+            AssertEqual(1024d, hotspotThroughput.GetValueOrDefault().DownloadBytesPerSecond, "The hotspot downlink should be the sharing host's sent delta (device download).");
+            AssertEqual(2048d, hotspotThroughput.GetValueOrDefault().UploadBytesPerSecond, "The hotspot uplink should be the sharing host's received delta (device upload).");
 
             settingsStore.UpdateThroughput(settings => settings.EnableSampling = false);
             reader.ReadTargets.Clear();

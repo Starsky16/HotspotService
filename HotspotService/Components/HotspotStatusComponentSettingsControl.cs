@@ -13,19 +13,19 @@ public sealed class HotspotStatusComponentSettingsControl : ComponentBase<Hotspo
 {
     private readonly CheckBox _showStatusDotCheckBox = new()
     {
-        Content = "显示开启状态圆点"
+        Content = "显示守护状态圆点（绿=守护开启，红=守护关闭）"
     };
     private readonly CheckBox _showClientCountCheckBox = new()
     {
-        Content = "显示设备数量（不支持时显示 None，关闭时显示 Off）"
+        Content = "显示热点状态（不存在无线网卡显示 None，开启时显示连接设备数，关闭时显示 Off）"
     };
     private readonly CheckBox _showHotspotThroughputCheckBox = new()
     {
-        Content = "显示热点网速（↓下行 ↑上行，需先在插件设置页启用网速采样）"
+        Content = "显示热点网速（上行/下行各一行小字，按连接设备视角；需先在插件设置页启用网速采样）"
     };
     private readonly CheckBox _showInternetThroughputCheckBox = new()
     {
-        Content = "显示外网(WAN)网速"
+        Content = "显示外网(WAN)网速（上行/下行各一行小字）"
     };
     private bool _updatingUi;
 

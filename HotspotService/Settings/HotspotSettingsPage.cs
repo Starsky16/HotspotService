@@ -35,6 +35,13 @@ public sealed class HotspotSettingsPage : SettingsPageBase
     private readonly TextBlock _internetThroughputValue;
     private readonly TextBlock _throughputSampledAtValue;
     private readonly ShortcutControls _shortcut;
+    private readonly ShortcutControls _guardToggleShortcut;
+    private readonly ShortcutControls _guardTargetToggleShortcut;
+    private readonly TextBlock _shortcutSourceValue = new()
+    {
+        TextWrapping = TextWrapping.Wrap
+    };
+    private readonly List<(ShortcutControls Controls, ShortcutPanelDescriptor Descriptor)> _shortcutPanels = [];
     private readonly TextBlock _restartTipText = new();
     private int _restartTipVersion;
     private readonly TextBlock _guardEnabledValue;
@@ -249,8 +256,28 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             out _internetThroughputValue,
             out _throughputSampledAtValue));
 
-        _shortcut = CreateShortcutPanel();
-        mainPanel.Children.Add(_shortcut.Panel);
+        _shortcut = RegisterShortcutPanel(new ShortcutPanelDescriptor(
+            Title: "重启热点",
+            EnableText: "启用快捷键（需要安装 KeyboardCapture 插件）",
+            GetSettings: () => _settingsStore.Shortcut,
+            Update: update => _settingsStore.UpdateShortcut(update),
+            GetTriggeredAt: () => _runtimeState.LastShortcutTriggeredAt,
+            GetError: () => _runtimeState.LastShortcutError));
+        _guardToggleShortcut = RegisterShortcutPanel(new ShortcutPanelDescriptor(
+            Title: "切换守护开关（守护开启 ↔ 关闭）",
+            EnableText: "启用快捷键（需要安装 KeyboardCapture 插件）",
+            GetSettings: () => _settingsStore.GuardToggleShortcut,
+            Update: update => _settingsStore.UpdateGuardToggleShortcut(update),
+            GetTriggeredAt: () => _runtimeState.LastGuardToggleTriggeredAt,
+            GetError: () => _runtimeState.LastGuardToggleError));
+        _guardTargetToggleShortcut = RegisterShortcutPanel(new ShortcutPanelDescriptor(
+            Title: "切换守护目标（要热点开 ↔ 要热点关）",
+            EnableText: "启用快捷键（需要安装 KeyboardCapture 插件）",
+            GetSettings: () => _settingsStore.GuardTargetToggleShortcut,
+            Update: update => _settingsStore.UpdateGuardTargetToggleShortcut(update),
+            GetTriggeredAt: () => _runtimeState.LastGuardTargetToggleTriggeredAt,
+            GetError: () => _runtimeState.LastGuardTargetToggleError));
+        mainPanel.Children.Add(CreateShortcutSection());
 
         var statusBorder = new Border
         {
@@ -358,7 +385,10 @@ public sealed class HotspotSettingsPage : SettingsPageBase
 
             _guardEnabledValue.Text = _runtimeState.GuardEnabled ? "已开启" : "已关闭";
             _guardTargetValue.Text = _runtimeState.GuardTarget == GuardTargetState.On ? "开" : "关";
-            _hotspotStateValue.Text = _runtimeState.LastKnownHotspotState.ToDisplayText();
+            // 不存在无线网卡时与组件的 “None” 对应，统一显示「未知」，避免与「已关闭」混淆。
+            _hotspotStateValue.Text = _runtimeState.TetheringSupport == HotspotSupportState.NotSupported
+                ? "未知"
+                : _runtimeState.LastKnownHotspotState.ToDisplayText();
             _lastCheckValue.Text = _runtimeState.LastCheckAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未检查";
             _lastErrorValue.Text = string.IsNullOrWhiteSpace(_runtimeState.LastError) ? "无" : _runtimeState.LastError;
 
@@ -369,24 +399,13 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             _throughputSampledAtValue.Text =
                 _runtimeState.LastThroughputSampleAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未采样";
 
-            var shortcut = _settingsStore.Shortcut;
-            _shortcut.EnableCheckBox.IsChecked = shortcut.Enabled;
-            _shortcut.KeyComboBox.SelectedItem = HotspotShortcutKeys.All
-                .FirstOrDefault(x => string.Equals(x, shortcut.KeyName, StringComparison.OrdinalIgnoreCase));
-            _shortcut.CtrlCheckBox.IsChecked = shortcut.Ctrl;
-            _shortcut.AltCheckBox.IsChecked = shortcut.Alt;
-            _shortcut.ShiftCheckBox.IsChecked = shortcut.Shift;
-            _shortcut.MetaCheckBox.IsChecked = shortcut.Meta;
-            _shortcut.CooldownBox.Value = HotspotShortcutSettings.ClampCooldown(shortcut.CooldownSeconds);
-
-            _shortcut.CombinationValue.Text = shortcut.DescribeShortcut();
-            _shortcut.SourceValue.Text = _runtimeState.ShortcutSourceAvailable
+            _shortcutSourceValue.Text = _runtimeState.ShortcutSourceAvailable
                 ? "已连接，快捷键可用"
                 : _runtimeState.ShortcutSourceMessage ?? "未检测到 KeyboardCapture 插件";
-            _shortcut.TriggeredAtValue.Text =
-                _runtimeState.LastShortcutTriggeredAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未触发";
-            _shortcut.ErrorValue.Text =
-                string.IsNullOrWhiteSpace(_runtimeState.LastShortcutError) ? "无" : _runtimeState.LastShortcutError;
+            foreach (var (controls, descriptor) in _shortcutPanels)
+            {
+                UpdateShortcutControls(controls, descriptor);
+            }
         }
         finally
         {
@@ -469,6 +488,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         {
             Text = "网速由网卡累计流量差值换算，单位为字节每秒（B/s、KB/s、MB/s）；热点网卡优先按 192.168.137.x 地址识别，"
                    + "其次按 Wi-Fi Direct 虚拟适配器识别，因此通常需要在热点开启后才能看到数据。"
+                   + "热点网卡按“连接设备终端”视角显示：↓ 为设备下载、↑ 为设备上传；外网网卡则是本机自己的下载与上传。"
                    + "是否在展示组件中显示网速，请到“移动热点守护”组件设置中单独开关。",
             FontSize = 12,
             Opacity = 0.8,
@@ -477,20 +497,22 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         return panel;
     }
 
-    private ShortcutControls CreateShortcutPanel()
+    private ShortcutControls CreateShortcutPanel(ShortcutPanelDescriptor descriptor)
     {
+        ArgumentNullException.ThrowIfNull(descriptor);
+
         var panel = new StackPanel
         {
             Spacing = 8
         };
         panel.Children.Add(new TextBlock
         {
-            Text = "快捷键重启热点"
+            Text = descriptor.Title
         });
 
         var enableCheckBox = new CheckBox
         {
-            Content = "启用快捷键（需要安装 KeyboardCapture 插件）"
+            Content = descriptor.EnableText
         };
         enableCheckBox.IsCheckedChanged += (_, _) =>
         {
@@ -499,7 +521,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
                 return;
             }
 
-            _settingsStore.UpdateShortcut(settings => settings.Enabled = enableCheckBox.IsChecked == true);
+            descriptor.Update(settings => settings.Enabled = enableCheckBox.IsChecked == true);
         };
         panel.Children.Add(enableCheckBox);
 
@@ -528,7 +550,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
 
             if (keyComboBox.SelectedItem is string keyName)
             {
-                _settingsStore.UpdateShortcut(settings => settings.KeyName = keyName);
+                descriptor.Update(settings => settings.KeyName = keyName);
             }
         };
         keyRow.Children.Add(keyComboBox);
@@ -560,7 +582,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
                 }
 
                 var value = checkBox.IsChecked == true;
-                _settingsStore.UpdateShortcut(settings => apply(settings, value));
+                descriptor.Update(settings => apply(settings, value));
             };
             modifierRow.Children.Add(checkBox);
             return checkBox;
@@ -588,7 +610,7 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             Minimum = HotspotShortcutSettings.MinimumCooldownSeconds,
             Maximum = HotspotShortcutSettings.MaximumCooldownSeconds,
             Increment = 1,
-            Value = HotspotShortcutSettings.ClampCooldown(_settingsStore.Shortcut.CooldownSeconds),
+            Value = HotspotShortcutSettings.ClampCooldown(descriptor.GetSettings().CooldownSeconds),
             MinWidth = 120
         };
         cooldownBox.ValueChanged += (_, _) =>
@@ -600,24 +622,15 @@ public sealed class HotspotSettingsPage : SettingsPageBase
 
             if (cooldownBox.Value is { } value)
             {
-                _settingsStore.UpdateShortcut(settings => settings.CooldownSeconds = (int)value);
+                descriptor.Update(settings => settings.CooldownSeconds = (int)value);
             }
         };
         cooldownRow.Children.Add(cooldownBox);
         panel.Children.Add(cooldownRow);
 
         panel.Children.Add(CreateStatusRow("当前组合", out var combinationValue));
-        panel.Children.Add(CreateStatusRow("KeyboardCapture", out var sourceValue, wrapValue: true));
         panel.Children.Add(CreateStatusRow("最近触发", out var triggeredAtValue));
         panel.Children.Add(CreateStatusRow("最近错误", out var errorValue, wrapValue: true));
-        panel.Children.Add(new TextBlock
-        {
-            Text = "快捷键由 KeyboardCapture 插件提供（使用非独占钩子，不会拦截系统热键）。"
-                   + "未安装该插件时快捷键不可用，其余功能不受影响；组合与冷却修改后立即生效。",
-            FontSize = 12,
-            Opacity = 0.8,
-            TextWrapping = TextWrapping.Wrap
-        });
 
         return new ShortcutControls(
             panel,
@@ -629,10 +642,73 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             metaCheckBox,
             cooldownBox,
             combinationValue,
-            sourceValue,
             triggeredAtValue,
             errorValue);
     }
+
+    /// <summary>创建一组快捷键面板并登记到刷新列表，供 <see cref="UpdateUi"/> 统一刷新。</summary>
+    private ShortcutControls RegisterShortcutPanel(ShortcutPanelDescriptor descriptor)
+    {
+        var controls = CreateShortcutPanel(descriptor);
+        _shortcutPanels.Add((controls, descriptor));
+        return controls;
+    }
+
+    /// <summary>把一组快捷键面板的控件刷成当前设置与最近触发状态。</summary>
+    private void UpdateShortcutControls(ShortcutControls controls, ShortcutPanelDescriptor descriptor)
+    {
+        var settings = descriptor.GetSettings();
+        controls.EnableCheckBox.IsChecked = settings.Enabled;
+        controls.KeyComboBox.SelectedItem = HotspotShortcutKeys.All
+            .FirstOrDefault(x => string.Equals(x, settings.KeyName, StringComparison.OrdinalIgnoreCase));
+        controls.CtrlCheckBox.IsChecked = settings.Ctrl;
+        controls.AltCheckBox.IsChecked = settings.Alt;
+        controls.ShiftCheckBox.IsChecked = settings.Shift;
+        controls.MetaCheckBox.IsChecked = settings.Meta;
+        controls.CooldownBox.Value = HotspotShortcutSettings.ClampCooldown(settings.CooldownSeconds);
+
+        controls.CombinationValue.Text = settings.DescribeShortcut();
+        controls.TriggeredAtValue.Text =
+            descriptor.GetTriggeredAt()?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "尚未触发";
+        var error = descriptor.GetError();
+        controls.ErrorValue.Text = string.IsNullOrWhiteSpace(error) ? "无" : error;
+    }
+
+    /// <summary>快捷键区域：共用的 KeyboardCapture 状态行与说明，加上三组各自独立的面板。</summary>
+    private StackPanel CreateShortcutSection()
+    {
+        var section = new StackPanel
+        {
+            Spacing = 10
+        };
+        section.Children.Add(new TextBlock
+        {
+            Text = "快捷键"
+        });
+        section.Children.Add(CreateStatusRow("KeyboardCapture", _shortcutSourceValue));
+        section.Children.Add(_shortcut.Panel);
+        section.Children.Add(_guardToggleShortcut.Panel);
+        section.Children.Add(_guardTargetToggleShortcut.Panel);
+        section.Children.Add(new TextBlock
+        {
+            Text = "快捷键由 KeyboardCapture 插件提供（使用非独占钩子，不会拦截系统热键）。"
+                   + "未安装该插件时快捷键不可用，其余功能不受影响；组合与冷却修改后立即生效。"
+                   + "三组快捷键各自独立冷却；若配置成同一组合，按键时按“重启热点 → 切换守护开关 → 切换守护目标”的顺序命中第一组。",
+            FontSize = 12,
+            Opacity = 0.8,
+            TextWrapping = TextWrapping.Wrap
+        });
+        return section;
+    }
+
+    /// <summary>一组快捷键面板的描述：标题、启用文案，以及读写该组设置与触发状态的委托。</summary>
+    private sealed record ShortcutPanelDescriptor(
+        string Title,
+        string EnableText,
+        Func<HotspotShortcutSettings> GetSettings,
+        Action<Action<HotspotShortcutSettings>> Update,
+        Func<DateTimeOffset?> GetTriggeredAt,
+        Func<string?> GetError);
 
     /// <summary>快捷键分组里的控件集合，避免设置页构造函数里出现大量 out 参数。</summary>
     private sealed record ShortcutControls(
@@ -645,7 +721,6 @@ public sealed class HotspotSettingsPage : SettingsPageBase
         CheckBox MetaCheckBox,
         NumericUpDown CooldownBox,
         TextBlock CombinationValue,
-        TextBlock SourceValue,
         TextBlock TriggeredAtValue,
         TextBlock ErrorValue);
 
@@ -656,6 +731,11 @@ public sealed class HotspotSettingsPage : SettingsPageBase
             TextWrapping = wrapValue ? TextWrapping.Wrap : TextWrapping.NoWrap
         };
 
+        return CreateStatusRow(label, valueBlock);
+    }
+
+    private static Grid CreateStatusRow(string label, TextBlock valueBlock)
+    {
         var grid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("140,*")

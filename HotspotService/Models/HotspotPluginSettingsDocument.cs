@@ -22,4 +22,20 @@ public sealed class HotspotPluginSettingsDocument
     /// 快捷键重启热点设置（通过 KeyboardCapture 插件订阅全局按键）。
     /// </summary>
     public HotspotShortcutSettings Shortcut { get; set; } = new();
+
+    /// <summary>
+    /// 快捷键切换守护开关（开启 ↔ 关闭）设置。
+    /// </summary>
+    public HotspotShortcutSettings GuardToggleShortcut { get; set; } = new()
+    {
+        KeyName = HotspotShortcutKeys.DefaultGuardToggleKey
+    };
+
+    /// <summary>
+    /// 快捷键切换守护目标（要热点开 ↔ 要热点关）设置。
+    /// </summary>
+    public HotspotShortcutSettings GuardTargetToggleShortcut { get; set; } = new()
+    {
+        KeyName = HotspotShortcutKeys.DefaultGuardTargetToggleKey
+    };
 }

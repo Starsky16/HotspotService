@@ -21,6 +21,10 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     private string? _shortcutSourceMessage;
     private DateTimeOffset? _lastShortcutTriggeredAt;
     private string? _lastShortcutError;
+    private DateTimeOffset? _lastGuardToggleTriggeredAt;
+    private string? _lastGuardToggleError;
+    private DateTimeOffset? _lastGuardTargetToggleTriggeredAt;
+    private string? _lastGuardTargetToggleError;
 
     public bool GuardEnabled
     {
@@ -140,6 +144,42 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     {
         get => _lastShortcutError;
         private set => SetProperty(ref _lastShortcutError, value);
+    }
+
+    /// <summary>
+    /// 最近一次通过快捷键切换守护开关的时间。
+    /// </summary>
+    public DateTimeOffset? LastGuardToggleTriggeredAt
+    {
+        get => _lastGuardToggleTriggeredAt;
+        private set => SetProperty(ref _lastGuardToggleTriggeredAt, value);
+    }
+
+    /// <summary>
+    /// 最近一次快捷键切换守护开关失败的原因，成功时为 null。
+    /// </summary>
+    public string? LastGuardToggleError
+    {
+        get => _lastGuardToggleError;
+        private set => SetProperty(ref _lastGuardToggleError, value);
+    }
+
+    /// <summary>
+    /// 最近一次通过快捷键切换守护目标的时间。
+    /// </summary>
+    public DateTimeOffset? LastGuardTargetToggleTriggeredAt
+    {
+        get => _lastGuardTargetToggleTriggeredAt;
+        private set => SetProperty(ref _lastGuardTargetToggleTriggeredAt, value);
+    }
+
+    /// <summary>
+    /// 最近一次快捷键切换守护目标失败的原因，成功时为 null。
+    /// </summary>
+    public string? LastGuardTargetToggleError
+    {
+        get => _lastGuardTargetToggleError;
+        private set => SetProperty(ref _lastGuardTargetToggleError, value);
     }
 
     public bool SetGuardEnabled(bool value)
@@ -266,5 +306,25 @@ public sealed class HotspotGuardRuntimeState : ObservableObject
     public void SetLastShortcutError(string? value)
     {
         LastShortcutError = value;
+    }
+
+    public void SetLastGuardToggleTriggeredAt(DateTimeOffset? value)
+    {
+        LastGuardToggleTriggeredAt = value;
+    }
+
+    public void SetLastGuardToggleError(string? value)
+    {
+        LastGuardToggleError = value;
+    }
+
+    public void SetLastGuardTargetToggleTriggeredAt(DateTimeOffset? value)
+    {
+        LastGuardTargetToggleTriggeredAt = value;
+    }
+
+    public void SetLastGuardTargetToggleError(string? value)
+    {
+        LastGuardTargetToggleError = value;
     }
 }

@@ -14,7 +14,7 @@ public sealed class HotspotStatusComponentSettings : ObservableObject
     private bool _showInternetThroughput = false;
 
     /// <summary>
-    /// 是否显示守护开启状态圆点（实心=开启，空心=关闭）。默认显示。
+    /// 是否显示守护状态圆点（绿=守护开启，红=守护关闭）。默认显示。
     /// </summary>
     public bool ShowStatusDot
     {
@@ -23,7 +23,7 @@ public sealed class HotspotStatusComponentSettings : ObservableObject
     }
 
     /// <summary>
-    /// 是否显示连接设备数量。默认显示。
+    /// 是否显示热点状态（不存在无线网卡显示 None，开启时显示连接设备数，关闭时显示 Off）。默认显示。
     /// </summary>
     public bool ShowClientCount
     {
@@ -32,7 +32,7 @@ public sealed class HotspotStatusComponentSettings : ObservableObject
     }
 
     /// <summary>
-    /// 是否显示热点网卡网速（↓下行 ↑上行）。默认显示，需在插件设置页启用网速采样后才有数据。
+    /// 是否显示热点网卡网速（下行、上行各一行小字，按连接设备终端视角）。默认显示，需在插件设置页启用网速采样后才有数据。
     /// </summary>
     public bool ShowHotspotThroughput
     {

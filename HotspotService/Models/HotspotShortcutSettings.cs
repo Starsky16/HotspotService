@@ -1,8 +1,9 @@
 namespace HotspotService.Models;
 
 /// <summary>
-/// 快捷键重启热点设置。通过 KeyboardCapture 插件（可选依赖）订阅全局按键，
-/// 命中组合键时重启热点；默认关闭，需要用户显式开启。
+/// 一组全局快捷键设置。通过 KeyboardCapture 插件（可选依赖）订阅全局按键，
+/// 命中组合键时执行对应动作（重启热点 / 切换守护开关 / 切换守护目标）；
+/// 三组设置各自独立保存与冷却，默认均关闭，需要用户显式开启。
 /// </summary>
 public sealed class HotspotShortcutSettings
 {
@@ -18,7 +19,7 @@ public sealed class HotspotShortcutSettings
     /// <summary>
     /// 触发键名，与 KeyboardCapture 的 <c>KeyboardKey.Name</c> 一致，例如 <c>A</c>、<c>F9</c>、<c>Up</c>。
     /// </summary>
-    public string KeyName { get; set; } = "F9";
+    public string KeyName { get; set; } = HotspotShortcutKeys.DefaultRestartKey;
 
     /// <summary>是否要求按下 Ctrl。</summary>
     public bool Ctrl { get; set; } = true;
@@ -63,7 +64,7 @@ public sealed class HotspotShortcutSettings
             parts.Add("Win");
         }
 
-        parts.Add(string.IsNullOrWhiteSpace(KeyName) ? "F9" : KeyName.Trim());
+        parts.Add(string.IsNullOrWhiteSpace(KeyName) ? HotspotShortcutKeys.DefaultRestartKey : KeyName.Trim());
         return string.Join("+", parts);
     }
 }
