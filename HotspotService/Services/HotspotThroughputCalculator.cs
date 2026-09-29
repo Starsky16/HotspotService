@@ -40,15 +40,20 @@ public sealed class HotspotThroughputCalculator
             return null;
         }
 
-        var downloadDelta = current.ReceivedBytes - previous.ReceivedBytes;
-        var uploadDelta = current.SentBytes - previous.SentBytes;
-        if (downloadDelta < 0 || uploadDelta < 0)
+        var receivedDelta = current.ReceivedBytes - previous.ReceivedBytes;
+        var sentDelta = current.SentBytes - previous.SentBytes;
+        if (receivedDelta < 0 || sentDelta < 0)
         {
             // 计数器回绕/归零：差值无意义，标记本周期无效并等待下一次采样。
             return null;
         }
 
-        return new NetworkThroughput(downloadDelta / seconds, uploadDelta / seconds);
+        // 热点目标按「连接设备终端」视角输出：共享端发出的数据即终端下行、
+        // 共享端收到的数据即终端上行，因此这里交换两个方向；
+        // 外网目标保持本机视角（下载 = 本机接收、上传 = 本机发送）。
+        return target == NetworkTrafficTarget.Hotspot
+            ? new NetworkThroughput(sentDelta / seconds, receivedDelta / seconds)
+            : new NetworkThroughput(receivedDelta / seconds, sentDelta / seconds);
     }
 
     /// <summary>丢弃指定目标的采样基线（例如采样被关闭时）。</summary>

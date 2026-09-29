@@ -6,6 +6,15 @@ namespace HotspotService.Models;
 /// </summary>
 public static class HotspotShortcutKeys
 {
+    /// <summary>「重启热点」快捷键的默认触发键。</summary>
+    public const string DefaultRestartKey = "F9";
+
+    /// <summary>「切换守护开/关」快捷键的默认触发键。</summary>
+    public const string DefaultGuardToggleKey = "F10";
+
+    /// <summary>「切换守护目标」快捷键的默认触发键。</summary>
+    public const string DefaultGuardTargetToggleKey = "F11";
+
     /// <summary>全部候选键名，顺序为字母、数字、功能键、编辑键、锁定键。</summary>
     public static IReadOnlyList<string> All { get; } = BuildAll();
 

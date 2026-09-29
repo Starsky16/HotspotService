@@ -72,30 +72,10 @@ public static class NetworkSpeedFormatter
     }
 
     /// <summary>
-    /// 组件用的展示文本：热点网卡显示 “↓下行 ↑上行”，外网网卡额外加 “WAN” 前缀；
-    /// 两个目标都不可见时返回空串（组件据此隐藏该文本块）。
+    /// 组件用的单路网速块：下行、上行各一行，未启用采样时返回 null（该路不显示）。
+    /// WAN 前缀由组件自行添加，因此这里只产出速率文本。
     /// </summary>
-    public static string FormatComponentText(
-        NetworkThroughputReadout hotspot,
-        NetworkThroughputReadout internet,
-        bool showHotspot,
-        bool showInternet)
-    {
-        var segments = new List<string>(2);
-        if (showHotspot && FormatSegment(hotspot, label: null) is { } hotspotSegment)
-        {
-            segments.Add(hotspotSegment);
-        }
-
-        if (showInternet && FormatSegment(internet, "WAN") is { } internetSegment)
-        {
-            segments.Add(internetSegment);
-        }
-
-        return string.Join(" | ", segments);
-    }
-
-    private static string? FormatSegment(NetworkThroughputReadout readout, string? label)
+    public static ComponentThroughputSegment? FormatComponentSegment(NetworkThroughputReadout readout)
     {
         if (readout is null || !readout.IsSampling)
         {
@@ -103,9 +83,10 @@ public static class NetworkSpeedFormatter
         }
 
         // 采样成功但还没有速率（首个采样点、刚切换网卡）或采样失败时显示占位符，避免数字跳动成 0。
-        var body = readout.Throughput is { } throughput
-            ? $"↓{FormatRate(throughput.DownloadBytesPerSecond)} ↑{FormatRate(throughput.UploadBytesPerSecond)}"
-            : "↓— ↑—";
-        return label is null ? body : $"{label} {body}";
+        return readout.Throughput is { } throughput
+            ? new ComponentThroughputSegment(
+                $"↓{FormatRate(throughput.DownloadBytesPerSecond)}",
+                $"↑{FormatRate(throughput.UploadBytesPerSecond)}")
+            : new ComponentThroughputSegment("↓—", "↑—");
     }
 }

@@ -21,6 +21,14 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     private int _clientCountRefreshSeconds = 10;
     private HotspotThroughputSettings _throughput = new();
     private HotspotShortcutSettings _shortcut = new();
+    private HotspotShortcutSettings _guardToggleShortcut = new()
+    {
+        KeyName = HotspotShortcutKeys.DefaultGuardToggleKey
+    };
+    private HotspotShortcutSettings _guardTargetToggleShortcut = new()
+    {
+        KeyName = HotspotShortcutKeys.DefaultGuardTargetToggleKey
+    };
 
     public HotspotPluginSettingsStore(string settingsFilePath)
     {
@@ -122,22 +130,92 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
     }
 
     /// <summary>
-    /// 修改快捷键设置。嵌套对象内部的修改不会被属性 setter 捕获，
+    /// 快捷键切换守护开关（开启 ↔ 关闭）设置。
+    /// </summary>
+    public HotspotShortcutSettings GuardToggleShortcut
+    {
+        get => _guardToggleShortcut;
+        set
+        {
+            if (SetProperty(ref _guardToggleShortcut, value))
+            {
+                Save();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 快捷键切换守护目标（要热点开 ↔ 要热点关）设置。
+    /// </summary>
+    public HotspotShortcutSettings GuardTargetToggleShortcut
+    {
+        get => _guardTargetToggleShortcut;
+        set
+        {
+            if (SetProperty(ref _guardTargetToggleShortcut, value))
+            {
+                Save();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 修改快捷键重启热点设置。嵌套对象内部的修改不会被属性 setter 捕获，
     /// 因此这里统一规整区间、通知界面刷新并立即持久化。
     /// </summary>
     public void UpdateShortcut(Action<HotspotShortcutSettings> update)
     {
+        UpdateShortcutCore(_shortcut, HotspotShortcutKeys.DefaultRestartKey, nameof(Shortcut), update);
+    }
+
+    /// <summary>修改快捷键切换守护开关设置。</summary>
+    public void UpdateGuardToggleShortcut(Action<HotspotShortcutSettings> update)
+    {
+        UpdateShortcutCore(
+            _guardToggleShortcut,
+            HotspotShortcutKeys.DefaultGuardToggleKey,
+            nameof(GuardToggleShortcut),
+            update);
+    }
+
+    /// <summary>修改快捷键切换守护目标设置。</summary>
+    public void UpdateGuardTargetToggleShortcut(Action<HotspotShortcutSettings> update)
+    {
+        UpdateShortcutCore(
+            _guardTargetToggleShortcut,
+            HotspotShortcutKeys.DefaultGuardTargetToggleKey,
+            nameof(GuardTargetToggleShortcut),
+            update);
+    }
+
+    /// <summary>
+    /// 通用快捷键设置更新：规整冷却与非法键名、通知界面刷新并立即持久化。
+    /// 三组快捷键共用该逻辑，避免各自实现出现差异。
+    /// </summary>
+    private void UpdateShortcutCore(
+        HotspotShortcutSettings target,
+        string defaultKey,
+        string propertyName,
+        Action<HotspotShortcutSettings> update)
+    {
         ArgumentNullException.ThrowIfNull(update);
 
-        update(_shortcut);
-        _shortcut.CooldownSeconds = HotspotShortcutSettings.ClampCooldown(_shortcut.CooldownSeconds);
-        if (!HotspotShortcutKeys.Contains(_shortcut.KeyName))
+        update(target);
+        NormalizeShortcut(target, defaultKey);
+        OnPropertyChanged(propertyName);
+        Save();
+    }
+
+    /// <summary>把冷却收进合法区间；键名非法时回落到该组快捷键的默认键。</summary>
+    private static HotspotShortcutSettings NormalizeShortcut(HotspotShortcutSettings settings, string defaultKey)
+    {
+        settings.CooldownSeconds = HotspotShortcutSettings.ClampCooldown(settings.CooldownSeconds);
+        if (!HotspotShortcutKeys.Contains(settings.KeyName))
         {
-            _shortcut.KeyName = "F9";
+            settings.KeyName = defaultKey;
         }
 
-        OnPropertyChanged(nameof(Shortcut));
-        Save();
+        return settings;
     }
 
     private void Load()
@@ -161,12 +239,17 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 _clientCountRefreshSeconds = Math.Max(1, document.ClientCountRefreshSeconds);
                 _throughput = document.Throughput ?? new HotspotThroughputSettings();
                 _throughput.SamplingIntervalSeconds = HotspotThroughputSettings.ClampInterval(_throughput.SamplingIntervalSeconds);
-                _shortcut = document.Shortcut ?? new HotspotShortcutSettings();
-                _shortcut.CooldownSeconds = HotspotShortcutSettings.ClampCooldown(_shortcut.CooldownSeconds);
-                if (!HotspotShortcutKeys.Contains(_shortcut.KeyName))
-                {
-                    _shortcut.KeyName = "F9";
-                }
+                _shortcut = NormalizeShortcut(
+                    document.Shortcut ?? new HotspotShortcutSettings(),
+                    HotspotShortcutKeys.DefaultRestartKey);
+
+                // 旧配置文件没有这两组快捷键：缺键时回落到各自默认键，不报错、不丢其它配置。
+                _guardToggleShortcut = NormalizeShortcut(
+                    document.GuardToggleShortcut ?? new HotspotShortcutSettings(),
+                    HotspotShortcutKeys.DefaultGuardToggleKey);
+                _guardTargetToggleShortcut = NormalizeShortcut(
+                    document.GuardTargetToggleShortcut ?? new HotspotShortcutSettings(),
+                    HotspotShortcutKeys.DefaultGuardTargetToggleKey);
 
                 return;
             }
@@ -228,7 +311,9 @@ public sealed class HotspotPluginSettingsStore : ObservableObject
                 RestartPolicy = _restartPolicy,
                 ClientCountRefreshSeconds = _clientCountRefreshSeconds,
                 Throughput = _throughput,
-                Shortcut = _shortcut
+                Shortcut = _shortcut,
+                GuardToggleShortcut = _guardToggleShortcut,
+                GuardTargetToggleShortcut = _guardTargetToggleShortcut
             };
             var json = JsonSerializer.Serialize(document, JsonOptions);
 
