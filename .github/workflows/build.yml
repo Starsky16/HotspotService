@@ -28,8 +28,10 @@ jobs:
     runs-on: windows-latest
     name: Build
     steps:
+      # 以下三个 action 统一用 v5：v4 打的是 Node 20，runner 会强制用 Node 24 跑并打
+      # 「Node.js 20 is deprecated」警告（v5 起改用 node24），只做这一档最小升级。
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # 生成发布说明要按 tag 追溯历史提交，浅克隆拿不到标签与历史。
           fetch-depth: 0
@@ -70,12 +72,12 @@ jobs:
           Write-Host "构建线=$line 目标分支=$branch 版本=$version apiVersion=$apiVersion TFM=$tfm SDK=$netMajor.x Latest=$latest"
 
       - name: Install .NET ${{ steps.line.outputs.dotnet }}
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ steps.line.outputs.dotnet }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ steps.line.outputs.line }}-${{ hashFiles('**/*.csproj') }}
