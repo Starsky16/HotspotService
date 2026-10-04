@@ -35,22 +35,15 @@ permissions:
 jobs:
   build:
     name: Build & publish dev-build prerelease
+    # 非 [build] 提交不构建：手动触发不受此限制。
+    # 注意：不用「exit 78 跳过」——GitHub Actions 里任何非零退出码都记为 failure
+    # （官方文档明确 Nonzero → failure，实测亦然），不存在 neutral 语义；
+    # 改用 job 级 if 判定，效果一致（job 显示 skipped，run 记为成功）。
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[build]')
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      # 非 [build] 提交不构建：手动触发不受此限制
-      - name: Skip unless latest commit message contains [build]
-        if: github.event_name == 'push'
-        shell: bash
-        env:
-          SUBJECT: ${{ github.event.head_commit.message }}
-        run: |
-          if ! printf '%s' "$SUBJECT" | grep -q '\[build\]'; then
-            echo "最新提交不含 [build] 标记，跳过 dev 构建"
-            exit 78 # neutral：标记为跳过而非失败
-          fi
 
       - name: 判定构建线
         id: line
@@ -74,7 +67,7 @@ jobs:
           $tfm = [regex]::Match((Get-Content HotspotService/HotspotService.csproj -Raw), '<TargetFramework>([^<]+)</TargetFramework>').Groups[1].Value
           if (-not $tfm) { throw "未能从 HotspotService/HotspotService.csproj 解析出 TargetFramework" }
           $netMajor = [regex]::Match($tfm, '^net(\d+)\.').Groups[1].Value
-          if ($netMajor -ne $line) {
+          if ("net$netMajor" -ne $line) {
             throw "构建线与分支不符：请求 $line，但当前分支 csproj 的 TFM 是 $tfm（net$netMajor 线），请改用 dev_net$netMajor 分支或选择 net$netMajor"
           }
 
