@@ -1,0 +1,146 @@
+name: Dev Build (预发布)
+
+# dev 分支的"发布级验证包"：把插件打包挪到云端，减轻本地设备压力。
+# 两条构建线（net8 / net10）共用本文件：
+#   1. 推送到 dev_net8 / dev_net10 且**最新一条 commit message 含 [build]** 时自动触发，
+#      按触发分支自动定线；
+#   2. Actions 页手动触发（workflow_dispatch），用 inputs.line 指定构建线，默认 net8。
+# 产物发布到固定 tag dev-build 的 pre-release：两条线共用同一条目，每次构建覆盖
+# 更新，正文注明本次是哪条线的构建——Releases 页始终只有一个预发布条目。
+# 正式发版仍走 build.yml（a.b.c.d tag 触发，用入库产物），互不干扰。
+on:
+  workflow_dispatch:
+    inputs:
+      line:
+        description: '构建线（net8 / net10）'
+        type: choice
+        options:
+          - net8
+          - net10
+        default: net8
+        required: false
+  push:
+    branches: [dev_net8, dev_net10]
+
+# 并发组按线拆开：同线新提交顶掉旧构建，两条线之间互不干扰
+# （单一固定组会让 net8 / net10 的构建互相取消）。
+concurrency:
+  group: dev-build-${{ github.event_name == 'workflow_dispatch' && inputs.line || (endsWith(github.ref_name, 'net10') && 'net10' || 'net8') }}
+  cancel-in-progress: true
+
+# 创建 Release 需要写权限；本仓库默认工作流权限为 read，不显式声明会以 403 失败。
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & publish dev-build prerelease
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 非 [build] 提交不构建：手动触发不受此限制
+      - name: Skip unless latest commit message contains [build]
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          if ! printf '%s' "$SUBJECT" | grep -q '\[build\]'; then
+            echo "最新提交不含 [build] 标记，跳过 dev 构建"
+            exit 78 # neutral：标记为跳过而非失败
+          fi
+
+      - name: 判定构建线
+        id: line
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_LINE: ${{ inputs.line }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # 手动触发用 inputs.line；push 按分支 dev_net8 / dev_net10 自动定线
+          if ($env:EVENT -eq 'workflow_dispatch') {
+            $line = $env:INPUT_LINE
+            if ($line -notin @('net8', 'net10')) { throw "inputs.line 非法：$line（只接受 net8 / net10）" }
+          } else {
+            if ($env:REF_NAME -eq 'dev_net8') { $line = 'net8' }
+            elseif ($env:REF_NAME -eq 'dev_net10') { $line = 'net10' }
+            else { throw "未知触发分支：$($env:REF_NAME)（本工作流只服务 dev_net8 / dev_net10）" }
+          }
+
+          # 校验当前分支 csproj 的目标框架与请求的线一致，防止手动触发时选错线
+          $tfm = [regex]::Match((Get-Content HotspotService/HotspotService.csproj -Raw), '<TargetFramework>([^<]+)</TargetFramework>').Groups[1].Value
+          if (-not $tfm) { throw "未能从 HotspotService/HotspotService.csproj 解析出 TargetFramework" }
+          $netMajor = [regex]::Match($tfm, '^net(\d+)\.').Groups[1].Value
+          if ($netMajor -ne $line) {
+            throw "构建线与分支不符：请求 $line，但当前分支 csproj 的 TFM 是 $tfm（net$netMajor 线），请改用 dev_net$netMajor 分支或选择 net$netMajor"
+          }
+
+          @(
+            "line=$line"
+            "tfm=$tfm"
+            "dotnet=$netMajor.x"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT
+
+          Write-Host "构建线=$line TFM=$tfm SDK=$netMajor.x"
+
+      - name: Install .NET ${{ steps.line.outputs.dotnet }}
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ steps.line.outputs.dotnet }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ steps.line.outputs.line }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-${{ steps.line.outputs.line }}-
+            ${{ runner.os }}-nuget-
+
+      - name: Build plugin
+        run: dotnet build .\HotspotService\HotspotService.csproj -c Release
+
+      # 两个测试工程都是 OutputType=Exe 的控制台程序（手写断言），
+      # dotnet test 不会执行任何用例，必须用 dotnet run 并检查退出码。
+      - name: Run unit tests
+        run: dotnet run --project .\HotspotService.Tests\HotspotService.Tests.csproj -c Release
+
+      - name: Run behavior tests
+        run: dotnet run --project .\HotspotService.BehaviorTests\HotspotService.BehaviorTests.csproj -c Release
+
+      # 打包出新鲜 cipx（会覆盖工作区里的入库 cipx）：产物只上 Release，
+      # 绝不回写提交进仓库；入库 cipx 的一致性校验是 build.yml 的职责。
+      - name: 打包 cipx
+        run: dotnet publish .\HotspotService\HotspotService.csproj -c Release -p:CreateCipx=true -p:GenerateHashSummary=true
+
+      - name: Publish prerelease dev-build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINE: ${{ steps.line.outputs.line }}
+          TFM: ${{ steps.line.outputs.tfm }}
+        run: |
+          netmajor="${LINE#net}"
+          other=$([ "$LINE" = "net8" ] && echo net10 || echo net8)
+          # 固定 tag dev-build：先删旧 Release（连 tag），再在当前提交上重建；
+          # 两条线共用同一条目，后一次构建覆盖前一次
+          gh release delete dev-build --yes --cleanup-tag || true
+          {
+            echo "自动构建于 GitHub Actions（dev 分支预发布，随时可能被覆盖更新）。"
+            echo "本条为 **$LINE 构建线**：目标框架 $TFM，适用于 .NET $netmajor 版 ClassIsland（另一条构建线为 $other）。"
+            echo "可用下方 HotspotService.cipx 安装，checksums.md 为其 MD5 清单。"
+            echo ""
+            echo "- 提交：${GITHUB_SHA::7} $(git log -1 --format=%s)"
+            echo "- 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- 稳定版请用 [正式 Release](https://github.com/${GITHUB_REPOSITORY}/releases/latest)"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create dev-build \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "dev 预构建 · $LINE · ${GITHUB_SHA::7}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            HotspotService/cipx/HotspotService.cipx \
+            HotspotService/cipx/checksums.md
